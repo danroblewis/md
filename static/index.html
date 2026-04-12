@@ -1,0 +1,772 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>mdserver</title>
+
+<link id="hljs-theme" rel="stylesheet"
+  href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/marked@12.0.0/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11.4.0/dist/mermaid.min.js"></script>
+
+
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg: #ffffff;
+  --fg: #1a1a1a;
+  --sidebar-bg: #f7f7f7;
+  --border: #e0e0e0;
+  --toolbar-bg: #fafafa;
+  --active-bg: #dbeafe;
+  --active-fg: #1d4ed8;
+  --hover-bg: #f0f0f0;
+  --btn-bg: #e8e8e8;
+  --btn-fg: #333;
+  --btn-hover: #d0d0d0;
+  --search-result-bg: #f9f9f9;
+  --scrollbar: #ccc;
+  --link: #1d4ed8;
+  --code-bg: #f6f8fa;
+  --blockquote-border: #d0d0d0;
+  --blockquote-fg: #666;
+}
+
+[data-theme="dark"] {
+  --bg: #1e1e1e;
+  --fg: #d4d4d4;
+  --sidebar-bg: #252526;
+  --border: #3e3e3e;
+  --toolbar-bg: #2d2d2d;
+  --active-bg: #1e3a5f;
+  --active-fg: #93c5fd;
+  --hover-bg: #2a2a2a;
+  --btn-bg: #3a3a3a;
+  --btn-fg: #d4d4d4;
+  --btn-hover: #4a4a4a;
+  --search-result-bg: #2a2a2a;
+  --scrollbar: #555;
+  --link: #93c5fd;
+  --code-bg: #2d2d2d;
+  --blockquote-border: #555;
+  --blockquote-fg: #999;
+}
+
+html, body { height: 100%; background: var(--bg); color: var(--fg); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 14px; }
+
+#app { display: flex; height: 100vh; overflow: hidden; }
+
+/* ── Sidebar ───────────────────────────────────────────── */
+#sidebar {
+  width: 260px;
+  min-width: 140px;
+  max-width: 520px;
+  background: var(--sidebar-bg);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  resize: horizontal;
+  flex-shrink: 0;
+}
+
+#search-box {
+  padding: 8px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+#search-input {
+  width: 100%;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 13px;
+  outline: none;
+}
+#search-input:focus { border-color: var(--link); }
+
+#search-results {
+  margin-top: 6px;
+  max-height: 280px;
+  overflow-y: auto;
+}
+
+.search-result {
+  padding: 4px 6px;
+  cursor: pointer;
+  border-radius: 3px;
+  border-bottom: 1px solid var(--border);
+}
+.search-result:hover { background: var(--hover-bg); }
+.sr-file { display: block; font-size: 11px; color: var(--link); font-weight: 500; }
+.sr-snippet { display: block; font-size: 12px; color: var(--blockquote-fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+#file-tree {
+  flex: 1;
+  overflow-y: auto;
+  padding: 6px 0;
+}
+
+.tree-item {
+  display: flex;
+  align-items: center;
+  padding: 3px 8px;
+  cursor: pointer;
+  user-select: none;
+  border-radius: 3px;
+  margin: 1px 4px;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tree-item:hover { background: var(--hover-bg); }
+.tree-item.active { background: var(--active-bg); color: var(--active-fg); }
+
+.tree-file::before { content: '📄 '; font-size: 11px; margin-right: 3px; }
+.tree-dir-label { display: flex; align-items: center; padding: 3px 8px; cursor: pointer; user-select: none; border-radius: 3px; margin: 1px 4px; font-size: 13px; font-weight: 500; }
+.tree-dir-label:hover { background: var(--hover-bg); }
+.tree-dir-label::before { content: '▶'; font-size: 9px; margin-right: 6px; transition: transform 0.15s; display: inline-block; }
+.tree-dir-label.open::before { transform: rotate(90deg); }
+.tree-dir-children { display: none; padding-left: 14px; }
+.tree-dir-children.open { display: block; }
+
+/* ── Content area ──────────────────────────────────────── */
+#content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--bg);
+  min-width: 0;
+}
+
+#toolbar {
+  display: flex;
+  align-items: center;
+  padding: 6px 12px;
+  background: var(--toolbar-bg);
+  border-bottom: 1px solid var(--border);
+  gap: 8px;
+  flex-shrink: 0;
+  min-height: 38px;
+}
+
+#current-file-name {
+  flex: 1;
+  font-size: 13px;
+  color: var(--blockquote-fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.toolbar-btn {
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--btn-bg);
+  color: var(--btn-fg);
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.toolbar-btn:hover { background: var(--btn-hover); }
+
+#render-panel {
+  flex: 1;
+  overflow-y: auto;
+  padding: 2rem 2.5rem;
+  line-height: 1.7;
+}
+
+/* Limit prose width for readability */
+#render-panel > * { max-width: 860px; }
+
+/* ── Markdown prose styles ─────────────────────────────── */
+#render-panel h1, #render-panel h2, #render-panel h3,
+#render-panel h4, #render-panel h5, #render-panel h6 {
+  margin: 1.4em 0 0.5em;
+  line-height: 1.3;
+  font-weight: 600;
+}
+#render-panel h1 { font-size: 2em; border-bottom: 1px solid var(--border); padding-bottom: 0.3em; }
+#render-panel h2 { font-size: 1.5em; border-bottom: 1px solid var(--border); padding-bottom: 0.2em; }
+#render-panel h3 { font-size: 1.2em; }
+#render-panel p { margin: 0.75em 0; }
+#render-panel a { color: var(--link); text-decoration: none; }
+#render-panel a:hover { text-decoration: underline; }
+#render-panel ul, #render-panel ol { margin: 0.5em 0 0.5em 1.5em; }
+#render-panel li { margin: 0.25em 0; }
+#render-panel blockquote {
+  margin: 1em 0;
+  padding: 0.5em 1em;
+  border-left: 4px solid var(--blockquote-border);
+  color: var(--blockquote-fg);
+  background: var(--code-bg);
+  border-radius: 0 4px 4px 0;
+}
+#render-panel table { border-collapse: collapse; width: 100%; margin: 1em 0; }
+#render-panel th, #render-panel td { border: 1px solid var(--border); padding: 6px 12px; text-align: left; }
+#render-panel th { background: var(--code-bg); font-weight: 600; }
+#render-panel tr:nth-child(even) { background: var(--sidebar-bg); }
+#render-panel img { max-width: 100%; border-radius: 4px; }
+#render-panel hr { border: none; border-top: 1px solid var(--border); margin: 1.5em 0; }
+
+#render-panel pre {
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 1em;
+  overflow-x: auto;
+  margin: 0.75em 0;
+}
+#render-panel code {
+  font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+  font-size: 0.875em;
+  background: var(--code-bg);
+  padding: 0.15em 0.35em;
+  border-radius: 3px;
+}
+#render-panel pre code {
+  background: none;
+  padding: 0;
+  font-size: 0.875em;
+}
+
+/* Mermaid diagrams */
+#render-panel .mermaid {
+  display: flex;
+  justify-content: center;
+  margin: 1em 0;
+}
+#render-panel .mermaid svg { max-width: 100%; }
+
+/* Welcome screen */
+#welcome {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--blockquote-fg);
+  gap: 12px;
+}
+#welcome h2 { font-size: 1.4em; font-weight: 400; }
+#welcome p { font-size: 13px; }
+
+/* ── Editor panel ──────────────────────────────────────── */
+#editor-panel {
+  display: none;
+  flex: 1;
+  overflow: hidden;
+  flex-direction: column;
+}
+
+.cm-editor {
+  height: 100%;
+  font-size: 14px;
+}
+.cm-scroller { overflow: auto !important; }
+
+/* Scrollbar styling */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--scrollbar); border-radius: 4px; }
+
+/* hljs overrides for dark background */
+[data-theme="dark"] .hljs { background: var(--code-bg); }
+</style>
+</head>
+<body>
+
+<div id="app">
+  <aside id="sidebar">
+    <div id="search-box">
+      <input id="search-input" type="text" placeholder="Search files..." autocomplete="off" spellcheck="false">
+      <div id="search-results"></div>
+    </div>
+    <div id="file-tree"></div>
+  </aside>
+
+  <main id="content">
+    <div id="toolbar">
+      <span id="current-file-name"></span>
+      <button class="toolbar-btn" id="theme-toggle">Dark</button>
+      <button class="toolbar-btn" id="edit-btn" style="display:none">Edit</button>
+    </div>
+    <div id="render-panel">
+      <div id="welcome">
+        <h2>mdserver</h2>
+        <p>Select a file from the sidebar to view it.</p>
+      </div>
+    </div>
+    <div id="editor-panel" tabindex="-1"></div>
+  </main>
+</div>
+
+<script>
+// ── CodeMirror — loaded on demand via dynamic import ─────
+// esm.sh deduplicates shared peer deps so all packages share one @codemirror/state.
+window._cmPromise = Promise.all([
+  import('https://esm.sh/codemirror'),
+  import('https://esm.sh/@codemirror/lang-markdown'),
+  import('https://esm.sh/@codemirror/theme-one-dark'),
+  import('https://esm.sh/@codemirror/language-data'),
+  import('https://esm.sh/@codemirror/language'),
+]).then(([cm, langMd, themeDark, langData, language]) => ({
+  EditorView: cm.EditorView,
+  basicSetup: cm.basicSetup,
+  markdown: langMd.markdown,
+  oneDark: themeDark.oneDark,
+  languages: langData.languages,
+  LanguageDescription: language.LanguageDescription,
+  syntaxHighlighting: language.syntaxHighlighting,
+  defaultHighlightStyle: language.defaultHighlightStyle,
+}));
+
+// ── State ───────────────────────────────────────────────
+const state = {
+  currentPath: null,
+  editorInstance: null,
+  isEditing: false,
+};
+
+// ── Extension → language map ────────────────────────────
+const EXT_LANG_MAP = {
+  go: 'go', py: 'python', js: 'javascript', ts: 'typescript',
+  tsx: 'tsx', jsx: 'jsx', rs: 'rust', java: 'java',
+  c: 'c', cpp: 'cpp', cc: 'cpp', h: 'c', hpp: 'cpp',
+  sh: 'bash', bash: 'bash', zsh: 'bash',
+  yaml: 'yaml', yml: 'yaml', json: 'json', toml: 'toml',
+  html: 'html', css: 'css', scss: 'scss', sql: 'sql',
+  rb: 'ruby', php: 'php', cs: 'csharp', kt: 'kotlin',
+  swift: 'swift', r: 'r', scala: 'scala',
+  ex: 'elixir', exs: 'elixir', lua: 'lua',
+  xml: 'xml', dockerfile: 'dockerfile', makefile: 'makefile',
+  tf: 'hcl', hcl: 'hcl', vim: 'vim', proto: 'protobuf',
+};
+
+// ── Boot ────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', async () => {
+  const savedTheme = localStorage.getItem('theme') || 'light';
+  applyTheme(savedTheme, false);
+
+  await loadFileTree();
+  connectSSE();
+
+  // Priority: URL ?file= param → server initial file → nothing
+  const urlFile = new URLSearchParams(location.search).get('file');
+  if (urlFile) {
+    openFile(urlFile);
+  } else {
+    try {
+      const cfg = await fetch('/api/config').then(r => r.json());
+      if (cfg.initialFile) openFile(cfg.initialFile);
+    } catch {}
+  }
+});
+
+// Keep URL in sync when navigating via back/forward.
+window.addEventListener('popstate', () => {
+  const file = new URLSearchParams(location.search).get('file');
+  if (file) openFile(file, true);
+});
+
+// ── File Tree ────────────────────────────────────────────
+async function loadFileTree() {
+  try {
+    const res = await fetch('/api/files');
+    const nodes = await res.json();
+    const container = document.getElementById('file-tree');
+    container.innerHTML = '';
+    if (!nodes || nodes.length === 0) {
+      container.innerHTML = '<div style="padding:12px;color:var(--blockquote-fg);font-size:12px;">No files found</div>';
+      return;
+    }
+    renderTreeNodes(nodes, container);
+  } catch (e) {
+    console.error('loadFileTree error:', e);
+  }
+}
+
+function renderTreeNodes(nodes, container) {
+  for (const node of nodes) {
+    if (node.isDir) {
+      const wrap = document.createElement('div');
+      wrap.className = 'tree-dir-wrap';
+
+      const label = document.createElement('div');
+      label.className = 'tree-dir-label';
+      label.textContent = node.name;
+      label.onclick = () => {
+        label.classList.toggle('open');
+        children.classList.toggle('open');
+      };
+
+      const children = document.createElement('div');
+      children.className = 'tree-dir-children';
+      if (node.children && node.children.length > 0) {
+        renderTreeNodes(node.children, children);
+      }
+
+      wrap.appendChild(label);
+      wrap.appendChild(children);
+      container.appendChild(wrap);
+    } else {
+      const el = document.createElement('div');
+      el.className = 'tree-item tree-file';
+      el.textContent = node.name;
+      el.dataset.path = node.path;
+      el.onclick = () => openFile(node.path);
+      container.appendChild(el);
+    }
+  }
+}
+
+function setActiveTreeItem(path) {
+  document.querySelectorAll('.tree-item.active').forEach(el => el.classList.remove('active'));
+  const el = document.querySelector(`.tree-item[data-path="${CSS.escape(path)}"]`);
+  if (el) {
+    el.classList.add('active');
+    // Auto-expand parent directories
+    let parent = el.parentElement;
+    while (parent && parent.id !== 'file-tree') {
+      if (parent.classList.contains('tree-dir-children')) {
+        parent.classList.add('open');
+        const label = parent.previousElementSibling;
+        if (label) label.classList.add('open');
+      }
+      parent = parent.parentElement;
+    }
+  }
+}
+
+// ── Open File ────────────────────────────────────────────
+async function openFile(path, fromPopstate) {
+  if (state.isEditing) {
+    await exitEditMode(false);
+  }
+  state.currentPath = path;
+
+  // Update URL so the link is copy-pasteable.
+  if (!fromPopstate) {
+    const target = '/?file=' + encodeURIComponent(path);
+    if (location.href !== location.origin + target) {
+      history.pushState(null, '', target);
+    }
+  }
+
+  setActiveTreeItem(path);
+  document.getElementById('current-file-name').textContent = path;
+  document.getElementById('edit-btn').style.display = '';
+
+  try {
+    const res = await fetch('/api/file?path=' + encodeURIComponent(path));
+    if (!res.ok) { console.error('fetch error', res.status); return; }
+    const text = await res.text();
+    await renderFile(path, text);
+  } catch (e) {
+    console.error('openFile error:', e);
+  }
+}
+
+// ── Render ───────────────────────────────────────────────
+async function renderFile(path, text) {
+  const ext = path.split('.').pop().toLowerCase();
+  const isMd = ext === 'md' || ext === 'markdown';
+  const lang = EXT_LANG_MAP[ext] || ext;
+
+  const mdSource = isMd ? text : ('```' + lang + '\n' + text + '\n```');
+
+  const panel = document.getElementById('render-panel');
+  // Save scroll as fraction of total height
+  const scrollFraction = panel.scrollHeight > 0 ? panel.scrollTop / panel.scrollHeight : 0;
+
+  panel.innerHTML = marked.parse(mdSource);
+
+  // Syntax highlight
+  panel.querySelectorAll('pre code').forEach(el => hljs.highlightElement(el));
+
+  // Mermaid
+  const mermaidNodes = panel.querySelectorAll('div.mermaid');
+  if (mermaidNodes.length > 0) {
+    try {
+      await mermaid.run({ nodes: mermaidNodes });
+    } catch (e) {
+      console.warn('mermaid render error:', e);
+    }
+  }
+
+  // Restore scroll after mermaid (SVG expansion may change scrollHeight)
+  panel.scrollTop = scrollFraction * panel.scrollHeight;
+}
+
+function escHtml(str) {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+// ── SSE Live Reload ──────────────────────────────────────
+function connectSSE() {
+  let es = new EventSource('/events');
+
+  es.onmessage = async (e) => {
+    let msg;
+    try { msg = JSON.parse(e.data); } catch { return; }
+    if (msg.type === 'ping') return;
+
+    if (msg.type === 'reload') {
+      // Always refresh file tree
+      loadFileTree();
+      // If changed file is currently open and we're not editing, re-render
+      if (msg.path === state.currentPath && !state.isEditing) {
+        try {
+          const res = await fetch('/api/file?path=' + encodeURIComponent(state.currentPath));
+          if (res.ok) {
+            const text = await res.text();
+            await renderFile(state.currentPath, text);
+          }
+        } catch {}
+      }
+    }
+  };
+
+  es.onerror = () => {
+    es.close();
+    setTimeout(connectSSE, 3000);
+  };
+}
+
+// ── Edit Mode ────────────────────────────────────────────
+document.getElementById('edit-btn').addEventListener('click', enterEditMode);
+
+async function enterEditMode() {
+  if (state.isEditing || !state.currentPath) return;
+
+  // Wait for CodeMirror to load (dynamic import, resolves with the modules)
+  const { EditorView, basicSetup, markdown, oneDark, languages, LanguageDescription,
+          syntaxHighlighting, defaultHighlightStyle } = await window._cmPromise;
+
+  const res = await fetch('/api/file?path=' + encodeURIComponent(state.currentPath));
+  const text = await res.text();
+
+  const renderPanel = document.getElementById('render-panel');
+  const editorPanel = document.getElementById('editor-panel');
+  renderPanel.style.display = 'none';
+  editorPanel.style.display = 'flex';
+
+  state.isEditing = true;
+
+  // Destroy previous editor instance
+  if (state.editorInstance) {
+    state.editorInstance.destroy();
+    state.editorInstance = null;
+  }
+
+  const isDark = document.documentElement.dataset.theme === 'dark';
+  const ext = state.currentPath.split('.').pop().toLowerCase();
+  const isMd = ext === 'md' || ext === 'markdown';
+
+  // Pick language extension for this file type.
+  let langExt;
+  if (isMd) {
+    // Markdown with syntax highlighting inside fenced code blocks.
+    langExt = markdown({ codeLanguages: languages });
+  } else {
+    const desc = LanguageDescription.matchFilename(languages, state.currentPath);
+    if (desc) langExt = await desc.load();
+  }
+
+  const extensions = [basicSetup];
+  if (langExt) extensions.push(langExt);
+  // oneDark supplies its own highlight style; in light mode we explicitly add
+  // the default style without {fallback:true} so it always fires.
+  if (isDark) {
+    extensions.push(oneDark);
+  } else {
+    extensions.push(syntaxHighlighting(defaultHighlightStyle));
+  }
+
+  state.editorInstance = new EditorView({
+    doc: text,
+    extensions,
+    parent: editorPanel,
+  });
+
+  state.editorInstance.focus();
+
+  // Save on focus leaving the editor container
+  const blurHandler = async (e) => {
+    if (!editorPanel.contains(e.relatedTarget)) {
+      editorPanel.removeEventListener('focusout', blurHandler);
+      await exitEditMode(true);
+    }
+  };
+  editorPanel.addEventListener('focusout', blurHandler);
+}
+
+async function exitEditMode(save) {
+  if (!state.isEditing) return;
+  state.isEditing = false;
+
+  if (save && state.editorInstance) {
+    await saveFile();
+  }
+
+  const renderPanel = document.getElementById('render-panel');
+  const editorPanel = document.getElementById('editor-panel');
+  editorPanel.style.display = 'none';
+  renderPanel.style.display = 'block';
+
+  // Re-render with saved content
+  if (state.currentPath) {
+    try {
+      const res = await fetch('/api/file?path=' + encodeURIComponent(state.currentPath));
+      if (res.ok) {
+        const text = await res.text();
+        await renderFile(state.currentPath, text);
+      }
+    } catch {}
+  }
+}
+
+async function saveFile() {
+  if (!state.editorInstance || !state.currentPath) return;
+  const content = state.editorInstance.state.doc.toString();
+  try {
+    await fetch('/api/file?path=' + encodeURIComponent(state.currentPath), {
+      method: 'POST',
+      body: content,
+      headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+    });
+  } catch (e) {
+    console.error('saveFile error:', e);
+  }
+}
+
+// ── Search ───────────────────────────────────────────────
+let searchTimer = null;
+
+document.getElementById('search-input').addEventListener('input', (e) => {
+  clearTimeout(searchTimer);
+  const q = e.target.value.trim();
+  if (q.length < 2) {
+    document.getElementById('search-results').innerHTML = '';
+    return;
+  }
+  searchTimer = setTimeout(() => runSearch(q), 300);
+});
+
+document.getElementById('search-input').addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    e.target.value = '';
+    document.getElementById('search-results').innerHTML = '';
+  }
+});
+
+async function runSearch(q) {
+  try {
+    const res = await fetch('/api/search?q=' + encodeURIComponent(q));
+    const results = await res.json();
+    const container = document.getElementById('search-results');
+    container.innerHTML = '';
+
+    if (!results || results.length === 0) {
+      container.innerHTML = '<div style="padding:6px;font-size:12px;color:var(--blockquote-fg);">No results</div>';
+      return;
+    }
+
+    for (const r of results) {
+      const el = document.createElement('div');
+      el.className = 'search-result';
+      el.innerHTML =
+        '<span class="sr-file">' + escHtml(r.file) + ':' + r.line + '</span>' +
+        '<span class="sr-snippet">' + escHtml(r.snippet) + '</span>';
+      el.onclick = () => {
+        openFile(r.file);
+        document.getElementById('search-input').value = '';
+        container.innerHTML = '';
+      };
+      container.appendChild(el);
+    }
+
+    if (results.length >= 200) {
+      const note = document.createElement('div');
+      note.style.cssText = 'padding:4px 6px;font-size:11px;color:var(--blockquote-fg);';
+      note.textContent = 'Results capped at 200';
+      container.appendChild(note);
+    }
+  } catch (e) {
+    console.error('search error:', e);
+  }
+}
+
+// ── Theme Toggle ─────────────────────────────────────────
+document.getElementById('theme-toggle').addEventListener('click', () => {
+  const current = document.documentElement.dataset.theme || 'light';
+  applyTheme(current === 'dark' ? 'light' : 'dark', true);
+});
+
+function applyTheme(theme, rerender) {
+  document.documentElement.dataset.theme = theme;
+  localStorage.setItem('theme', theme);
+
+  const link = document.getElementById('hljs-theme');
+  link.href = theme === 'dark'
+    ? 'https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css'
+    : 'https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css';
+
+  document.getElementById('theme-toggle').textContent = theme === 'dark' ? 'Light' : 'Dark';
+
+  mermaid.initialize({
+    startOnLoad: false,
+    theme: theme === 'dark' ? 'dark' : 'default',
+    securityLevel: 'loose',
+  });
+
+  if (rerender && state.currentPath && !state.isEditing) {
+    fetch('/api/file?path=' + encodeURIComponent(state.currentPath))
+      .then(r => r.text())
+      .then(text => renderFile(state.currentPath, text))
+      .catch(() => {});
+  }
+}
+
+// Initialize mermaid on first load
+mermaid.initialize({
+  startOnLoad: false,
+  theme: (localStorage.getItem('theme') || 'light') === 'dark' ? 'dark' : 'default',
+  securityLevel: 'loose',
+});
+
+// Configure marked renderer once.
+// `return false` in v12 silently drops the token rather than falling through,
+// so we render code blocks explicitly to give hljs a proper element.
+// marked.use renderer functions receive old positional args (code, lang, escaped),
+// NOT a token object — despite what v12 docs suggest.
+marked.use({
+  renderer: {
+    code(code, lang) {
+      if (lang === 'mermaid') {
+        const id = 'mermaid-' + Math.random().toString(36).slice(2);
+        return '<div class="mermaid" id="' + id + '">' + escHtml(code) + '</div>';
+      }
+      const langAttr = lang ? ' class="language-' + escHtml(lang) + '"' : '';
+      return '<pre><code' + langAttr + '>' + escHtml(code) + '</code></pre>\n';
+    }
+  }
+});
+</script>
+</body>
+</html>
