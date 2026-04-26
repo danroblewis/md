@@ -8,6 +8,203 @@
 <link id="hljs-theme" rel="stylesheet"
   href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script>
+/* ── Evident language definition for highlight.js ─────────────────────── */
+(function () {
+  'use strict';
+
+  /** @param {import('highlight.js').HLJSApi} hljs */
+  function evident(hljs) {
+
+    const COMMENT = {
+      scope: 'comment',
+      begin: /--/,
+      end: /$/,
+      relevance: 0,
+    };
+
+    const STRING = {
+      scope: 'string',
+      begin: /"/,
+      end: /"/,
+      contains: [{ begin: /\\./ }],
+      relevance: 0,
+    };
+
+    const NUMBER = {
+      scope: 'number',
+      match: /\b\d+(\.\d+)?\b/,
+      relevance: 0,
+    };
+
+    // `type` declaration keyword → purple
+    const TYPE_DECL_KW = {
+      scope: 'type',
+      match: /\btype\b/,
+    };
+
+    // Core keywords → blue / keyword colour
+    const KEYWORDS = {
+      scope: 'keyword',
+      match: /\b(claim|evident|assert|when|otherwise|with|as|then|else|find|all|minimizing|where)\b/,
+    };
+
+    // Fix #1: After `claim` or `evident`, highlight the next word as a function name.
+    // This mode starts on the keyword, then captures the following identifier.
+    const CLAIM_NAME = {
+      begin: /\b(claim|evident)\s+/,
+      beginScope: 'keyword',
+      end: /[a-z_][A-Za-z0-9_]*/,
+      endScope: 'title.function',
+      relevance: 2,
+    };
+
+    // => and ⇒ implication arrows → bold operator
+    const IMPLICATION = {
+      scope: 'operator',
+      match: /=>|⇒/,
+      relevance: 2,
+    };
+
+    // Unicode quantifiers and negation → keyword colour (indigo)
+    // Order matters: ∃! and ¬∃ must come before ∃ and ¬ respectively.
+    const UNICODE_QUANTIFIER = {
+      scope: 'keyword',
+      match: /∃!|¬∃|∀|∃|¬/,
+      relevance: 2,
+    };
+
+    // Unicode membership operators → operator colour
+    const UNICODE_MEMBERSHIP = {
+      scope: 'operator',
+      match: /∈|∉/,
+      relevance: 1,
+    };
+
+    // Punctuation operators (includes | explicitly)
+    const OPERATOR = {
+      scope: 'operator',
+      match: /->|<=|>=|!=|[|:=+\-*<>]/,
+      relevance: 0,
+    };
+
+    // Word operators: in, starts_with
+    const WORD_OPERATOR = {
+      scope: 'operator',
+      match: /\b(in|starts_with)\b/,
+    };
+
+    // Top-level predicate names: lowercase identifier at the very start of a line
+    // (no leading whitespace). This catches head predicates in top-level implication
+    // rules such as:  node n ⇒ reachable n n
+    // Placed after all keyword/claim rules so those take priority.
+    const TOP_LEVEL_PREDICATE = {
+      scope: 'title.function',
+      match: /^[a-z_][A-Za-z0-9_]*/,
+      relevance: 0,
+    };
+
+    // Type-level built-ins → teal/cyan
+    const TYPE_KEYWORDS = {
+      scope: 'built_in',
+      match: /\b(Prop|det|semidet|nondet|Nat|Int|Real|Bool|String|List|Maybe|Set|Type|Arrow|ForAll)\b/,
+    };
+
+    // Any other CapitalisedIdentifier → teal (type constructor)
+    const CAPITALIZED = {
+      scope: 'built_in',
+      match: /\b[A-Z][A-Za-z0-9_]*\b/,
+      relevance: 0,
+    };
+
+    // Fix #3: Replaced TYPE_PARAM_BRACKET (which swallowed list literals) with
+    // simple bracket punctuation. Contents are handled by existing rules.
+    const BRACKET = {
+      scope: 'punctuation',
+      match: /[\[\]]/,
+      relevance: 0,
+    };
+
+    // Fix #6: `?identifier` as a single variable token (output variable).
+    // Must come before standalone QUERY_OP so it takes priority.
+    const QUERY_VAR = {
+      scope: 'variable',
+      match: /\?[A-Za-z_][A-Za-z0-9_]*/,
+      relevance: 2,
+    };
+
+    // Fix #6: Standalone `?` (query line opener, e.g. `? sort [3, 1, 2]`)
+    const QUERY_OP = {
+      scope: 'selector-tag',
+      match: /\?/,
+      relevance: 2,
+    };
+
+    // { } record / block delimiters
+    const BRACE = {
+      scope: 'punctuation',
+      match: /[{}]/,
+      relevance: 0,
+    };
+
+    // Fix #5: Record field names — lowercase identifier immediately before `:` or `=`
+    // Covers both type annotations (id : Nat) and record literals (id = 1).
+    const FIELD_NAME = {
+      scope: 'attr',
+      match: /\b[a-z_][A-Za-z0-9_]*(?=\s*[:=])/,
+      relevance: 0,
+    };
+
+    // Fix #7: Field access — identifier after a dot (e.g. req.method → method)
+    const FIELD_ACCESS = {
+      scope: 'attr',
+      match: /(?<=\.)[a-z_][A-Za-z0-9_]*/,
+      relevance: 0,
+    };
+
+    // Fix #2: Sub-claim predicate names — lowercase identifier at the start of
+    // an indented line (body lines in claim/evident blocks).
+    // Pattern: start-of-line, optional whitespace, then a lowercase identifier
+    // not followed by `(` (to avoid matching function-call syntax in other langs).
+    const BODY_PREDICATE = {
+      scope: 'title.function',
+      match: /^[ \t]+[a-z_][A-Za-z0-9_]*/,
+      relevance: 0,
+    };
+
+    return {
+      name: 'Evident',
+      aliases: ['ev'],
+      case_insensitive: false,
+      contains: [
+        COMMENT,
+        STRING,
+        CLAIM_NAME,          // must be before KEYWORDS so it captures the keyword+name pair
+        QUERY_VAR,           // must be before QUERY_OP
+        QUERY_OP,
+        IMPLICATION,         // => and ⇒ — before OPERATOR so they don't get split
+        UNICODE_QUANTIFIER,  // ∀ ∃ ∃! ¬ ¬∃ — before UNICODE_MEMBERSHIP
+        UNICODE_MEMBERSHIP,  // ∈ ∉
+        TYPE_DECL_KW,
+        KEYWORDS,
+        TYPE_KEYWORDS,
+        CAPITALIZED,
+        BRACKET,             // replaces TYPE_PARAM_BRACKET
+        WORD_OPERATOR,
+        OPERATOR,
+        NUMBER,
+        BRACE,
+        FIELD_ACCESS,        // before FIELD_NAME so dot-access takes priority
+        FIELD_NAME,
+        BODY_PREDICATE,
+        TOP_LEVEL_PREDICATE, // after BODY_PREDICATE; catches col-0 predicate names
+      ],
+    };
+  }
+
+  hljs.registerLanguage('evident', evident);
+})();
+</script>
 <script src="https://cdn.jsdelivr.net/npm/marked@12.0.0/marked.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/mermaid@11.4.0/dist/mermaid.min.js"></script>
 
@@ -283,6 +480,56 @@ html, body { height: 100%; background: var(--bg); color: var(--fg); font-family:
 
 /* hljs overrides for dark background */
 [data-theme="dark"] .hljs { background: var(--code-bg); }
+
+/* ── Evident language token colours ──────────────────────────────────── */
+
+/* claim keyword: indigo */
+.language-evident .hljs-keyword { color: #4f46e5; font-weight: 600; }
+[data-theme="dark"] .language-evident .hljs-keyword { color: #818cf8; font-weight: 600; }
+
+/* type declaration keyword: purple */
+.language-evident .hljs-type { color: #7c3aed; }
+[data-theme="dark"] .language-evident .hljs-type { color: #a78bfa; }
+
+/* built-in type names / capitalized identifiers: teal/cyan */
+.language-evident .hljs-built_in { color: #0891b2; }
+[data-theme="dark"] .language-evident .hljs-built_in { color: #22d3ee; }
+
+/* operators (including =>): bold blue-grey */
+.language-evident .hljs-operator { color: #0369a1; font-weight: 600; }
+[data-theme="dark"] .language-evident .hljs-operator { color: #38bdf8; font-weight: 600; }
+
+/* ? query operator: green/teal (reuses selector-tag) */
+.language-evident .hljs-selector-tag { color: #059669; font-weight: 700; }
+[data-theme="dark"] .language-evident .hljs-selector-tag { color: #34d399; font-weight: 700; }
+
+/* comments: italic grey */
+.language-evident .hljs-comment { color: #6b7280; font-style: italic; }
+[data-theme="dark"] .language-evident .hljs-comment { color: #9ca3af; font-style: italic; }
+
+/* string literals: green */
+.language-evident .hljs-string { color: #16a34a; }
+[data-theme="dark"] .language-evident .hljs-string { color: #4ade80; }
+
+/* numeric literals: orange */
+.language-evident .hljs-number { color: #ea580c; }
+[data-theme="dark"] .language-evident .hljs-number { color: #fb923c; }
+
+/* punctuation brackets: muted fg */
+.language-evident .hljs-punctuation { color: #374151; }
+[data-theme="dark"] .language-evident .hljs-punctuation { color: #d1d5db; }
+
+/* claim/evident names and sub-claim predicates: warm orange-brown */
+.language-evident .hljs-title\.function { color: #b45309; font-weight: 600; }
+[data-theme="dark"] .language-evident .hljs-title\.function { color: #fbbf24; font-weight: 600; }
+
+/* ?result output variables: magenta/pink */
+.language-evident .hljs-variable { color: #9d174d; font-weight: 600; }
+[data-theme="dark"] .language-evident .hljs-variable { color: #f472b6; font-weight: 600; }
+
+/* record field names and dot-access fields: slate blue */
+.language-evident .hljs-attr { color: #1d4ed8; }
+[data-theme="dark"] .language-evident .hljs-attr { color: #93c5fd; }
 </style>
 </head>
 <body>
@@ -328,9 +575,81 @@ window._cmPromise = Promise.all([
   oneDark: themeDark.oneDark,
   languages: langData.languages,
   LanguageDescription: language.LanguageDescription,
+  LanguageSupport: language.LanguageSupport,
   syntaxHighlighting: language.syntaxHighlighting,
   defaultHighlightStyle: language.defaultHighlightStyle,
+  StreamLanguage: language.StreamLanguage,
 }));
+
+// ── Evident stream parser for CodeMirror ────────────────
+// Token names must be @lezer/highlight tag property names (CM6 style).
+// CM5 names like 'variable', 'def', 'builtin', 'type', 'property' create
+// anonymous unstyled tags and produce no highlighting.
+const _evidentParser = (() => {
+  const KEYWORDS = new Set(['claim','evident','assert','when','otherwise','with','as','then','else','find','all','minimizing','where','type']);
+  const BUILTINS = new Set(['Prop','det','semidet','nondet','Nat','Int','Real','Bool','String','List','Maybe','Set','Type','Arrow','ForAll']);
+  const WORD_OPS = new Set(['in','starts_with']);
+  return {
+    startState() { return { expectName: false, lineStart: false }; },
+    copyState(s) { return { expectName: s.expectName, lineStart: s.lineStart }; },
+    token(stream, state) {
+      // Track whether the next non-whitespace token begins a line.
+      if (stream.sol()) state.lineStart = true;
+      if (stream.eatSpace()) return null;
+      const atSol = state.lineStart;
+      state.lineStart = false;
+
+      // Line comment
+      if (stream.match('--')) { stream.skipToEnd(); return 'comment'; }
+      // String
+      if (stream.peek() === '"') {
+        stream.next();
+        while (!stream.eol()) { const c = stream.next(); if (c === '\\') stream.next(); else if (c === '"') break; }
+        return 'string';
+      }
+      // Query variable ?ident
+      if (stream.match(/^\?[A-Za-z_][A-Za-z0-9_]*/)) return 'variableName';
+      // Standalone ?
+      if (stream.peek() === '?') { stream.next(); return 'operator'; }
+      // Number
+      if (stream.match(/^\d+(\.\d+)?/)) return 'number';
+      // Unicode operators (longest first to avoid prefix conflicts)
+      if (stream.match('∃!') || stream.match('¬∃')) return 'keyword';
+      if (stream.match('=>') || stream.match('⇒') || stream.match('->') ||
+          stream.match('<=') || stream.match('>=') || stream.match('!=')) return 'operator';
+      if (stream.match('∀') || stream.match('∃') || stream.match('¬')) return 'keyword';
+      if (stream.match('∈') || stream.match('∉')) return 'operator';
+      // ASCII operators
+      if (stream.match(/^[|:=+\-*<>]/)) return 'operator';
+      // Brackets / braces / parens
+      if (stream.match(/^[\[\]{}()]/)) return 'bracket';
+      // Dot → field access
+      if (stream.peek() === '.') {
+        stream.next();
+        if (stream.match(/^[a-z_][A-Za-z0-9_]*/)) return 'propertyName';
+        return null;
+      }
+      // Words
+      const m = stream.match(/^[A-Za-z_][A-Za-z0-9_]*/);
+      if (m) {
+        const w = m[0];
+        // Name following 'claim' or 'evident' is a definition
+        if (state.expectName) { state.expectName = false; return 'labelName'; }
+        if (KEYWORDS.has(w)) { state.expectName = w === 'claim' || w === 'evident'; return 'keyword'; }
+        if (WORD_OPS.has(w)) return 'operatorKeyword';
+        if (BUILTINS.has(w)) return 'typeName';
+        if (/^[A-Z]/.test(w)) return 'typeName';
+        // Field name: ident immediately before : or =
+        if (stream.match(/^\s*[:=]/, false)) return 'propertyName';
+        // Predicate name: first token on a line (top-level or indented body)
+        if (atSol) return 'labelName';
+        return 'variableName';
+      }
+      stream.next();
+      return null;
+    },
+  };
+})();
 
 // ── State ───────────────────────────────────────────────
 const state = {
@@ -556,7 +875,7 @@ async function enterEditMode() {
 
   // Wait for CodeMirror to load (dynamic import, resolves with the modules)
   const { EditorView, basicSetup, markdown, oneDark, languages, LanguageDescription,
-          syntaxHighlighting, defaultHighlightStyle } = await window._cmPromise;
+          LanguageSupport, syntaxHighlighting, defaultHighlightStyle, StreamLanguage } = await window._cmPromise;
 
   const res = await fetch('/api/file?path=' + encodeURIComponent(state.currentPath));
   const text = await res.text();
@@ -582,7 +901,14 @@ async function enterEditMode() {
   let langExt;
   if (isMd) {
     // Markdown with syntax highlighting inside fenced code blocks.
-    langExt = markdown({ codeLanguages: languages });
+    const evidentDesc = LanguageDescription.of({
+      name: 'Evident',
+      alias: ['ev'],
+      load() { return Promise.resolve(new LanguageSupport(StreamLanguage.define(_evidentParser))); },
+    });
+    langExt = markdown({ codeLanguages: [evidentDesc, ...languages] });
+  } else if (ext === 'ev') {
+    langExt = new LanguageSupport(StreamLanguage.define(_evidentParser));
   } else {
     const desc = LanguageDescription.matchFilename(languages, state.currentPath);
     if (desc) langExt = await desc.load();
@@ -757,10 +1083,18 @@ mermaid.initialize({
 // NOT a token object — despite what v12 docs suggest.
 marked.use({
   renderer: {
+    // Escape HTML tokens (inline and block) as literal text instead of
+    // omitting or passing them through. This prevents tags like <title>
+    // from being injected into innerHTML where the browser would interpret
+    // them structurally (e.g. <title> swallows all subsequent content).
+    html(token) {
+      const text = typeof token === 'object' ? token.text : token;
+      return escHtml(text);
+    },
     code(code, lang) {
       if (lang === 'mermaid') {
         const id = 'mermaid-' + Math.random().toString(36).slice(2);
-        return '<div class="mermaid" id="' + id + '">' + escHtml(code) + '</div>';
+        return '<div class="mermaid" id="' + id + '">' + escHtml(code.replace(/\\n/g, '\n')) + '</div>';
       }
       const langAttr = lang ? ' class="language-' + escHtml(lang) + '"' : '';
       return '<pre><code' + langAttr + '>' + escHtml(code) + '</code></pre>\n';
