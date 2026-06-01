@@ -600,8 +600,10 @@ func parseSession(abs, id string) (*SessionData, error) {
 	for {
 		line, readErr := reader.ReadBytes('\n')
 		if len(line) > 0 {
-			// Cheap pre-filter: only user/assistant lines can yield prose.
-			if bytes.Contains(line, []byte(`"type":"user"`)) || bytes.Contains(line, []byte(`"type":"assistant"`)) {
+			// Cheap pre-filter: only message lines carry a "role" — this skips
+			// huge snapshot/permission records without a full parse, and is
+			// independent of JSON whitespace.
+			if bytes.Contains(line, []byte(`"role"`)) {
 				if turn, ok := turnFromLine(line); ok {
 					if data.Project == "" {
 						// cwd lives on these records; capture it once.

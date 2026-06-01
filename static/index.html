@@ -738,6 +738,28 @@ html, body { height: 100%; background: var(--bg); color: var(--fg); font-family:
 /* Toolbar session navigation */
 #session-nav { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
 #sess-pos { font-size: 12px; color: var(--blockquote-fg); white-space: nowrap; font-variant-numeric: tabular-nums; }
+
+/* In-transcript find bar */
+#session-find { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+#find-input {
+  width: 180px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 12px;
+  outline: none;
+}
+#find-input:focus { border-color: var(--link); }
+#find-count { font-size: 11px; color: var(--blockquote-fg); white-space: nowrap; font-variant-numeric: tabular-nums; min-width: 48px; }
+#find-prev, #find-next { padding: 2px 8px; line-height: 1; }
+
+/* Search matches inside transcript prose */
+mark.search-hit { background: #fde68a; color: inherit; border-radius: 2px; padding: 0 1px; }
+mark.search-hit-active { background: #f59e0b; box-shadow: 0 0 0 2px #f59e0b; }
+[data-theme="dark"] mark.search-hit { background: #92560a; color: #fff; }
+[data-theme="dark"] mark.search-hit-active { background: #d97706; box-shadow: 0 0 0 2px #d97706; }
 </style>
 </head>
 <body>
@@ -759,6 +781,12 @@ html, body { height: 100%; background: var(--bg); color: var(--fg); font-family:
   <main id="content">
     <div id="toolbar">
       <span id="current-file-name"></span>
+      <span id="session-find" style="display:none">
+        <input id="find-input" type="text" placeholder="Find in transcript… (⌘F)" autocomplete="off" spellcheck="false">
+        <span id="find-count"></span>
+        <button class="toolbar-btn" id="find-prev" title="Previous match (Shift+Enter)">↑</button>
+        <button class="toolbar-btn" id="find-next" title="Next match (Enter)">↓</button>
+      </span>
       <span id="session-nav" style="display:none">
         <span id="sess-pos" title="Position in transcript"></span>
         <button class="toolbar-btn" id="sess-top" title="Jump to start (Home)">⏫ Start</button>
@@ -1124,6 +1152,8 @@ async function openFile(path, fromPopstate) {
   }
   state.currentSessionId = null;
   document.getElementById('session-nav').style.display = 'none';
+  document.getElementById('session-find').style.display = 'none';
+  if (window._resetFind) window._resetFind();
   state.currentPath = path;
 
   // Update URL so the link is copy-pasteable.
@@ -1479,19 +1509,77 @@ async function openSession(id, title, fromPopstate) {
 // session grow), otherwise preserves their scroll position.
 async function reloadSession() {
   const id = state.currentSessionId;
+  const win = state.sessionRender;
   if (!id) return;
   const panel = document.getElementById('render-panel');
-  const sh = panel.scrollHeight, st = panel.scrollTop, ch = panel.clientHeight;
-  const atEnd = sh - st - ch < 120;
-  const frac = sh > ch ? st / (sh - ch) : 0;
+  const atEnd = panel.scrollHeight - panel.scrollTop - panel.clientHeight < 120;
+  // Anchor on the turn we're currently reading (a stable index), NOT a scroll
+  // fraction — the fraction maps differently depending on which pages are
+  // mounted, which is what made the scroll jump on every reload.
+  const topTurn = win && win.topVisibleTurn ? win.topVisibleTurn() : 0;
   try {
     const data = await fetch('/api/session?id=' + encodeURIComponent(id)).then(r => r.json());
     if (state.currentSessionId !== id) return; // user navigated away mid-fetch
-    renderSession(data, { atEnd, frac });
+    renderSession(data, { atEnd, turn: topTurn });
   } catch (e) {
     console.error('reloadSession error:', e);
   }
 }
+
+// ── Transcript find bar wiring ───────────────────────────
+(function () {
+  const input = document.getElementById('find-input');
+  const count = document.getElementById('find-count');
+  let timer = null;
+  const win = () => state.sessionRender;
+
+  function updateCount() {
+    const w = win();
+    if (!w || !w.searchInfo || !input.value.trim()) { count.textContent = ''; return; }
+    const { count: n, index } = w.searchInfo();
+    count.textContent = n === 0 ? 'no results' : (index >= 0 ? index + 1 : '–') + ' / ' + n;
+  }
+
+  input.addEventListener('input', () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      const w = win();
+      if (!w || !w.setSearch) return;
+      const q = input.value.trim();
+      const n = w.setSearch(q);
+      if (q && n > 0) w.gotoMatch(0);
+      updateCount();
+    }, 200);
+  });
+  input.addEventListener('keydown', (e) => {
+    const w = win();
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (w) { e.shiftKey ? w.prevMatch() : w.nextMatch(); updateCount(); }
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      input.value = '';
+      if (w && w.setSearch) w.setSearch('');
+      updateCount();
+      input.blur();
+    }
+  });
+  document.getElementById('find-next').addEventListener('click', () => { const w = win(); if (w) { w.nextMatch(); updateCount(); } input.focus(); });
+  document.getElementById('find-prev').addEventListener('click', () => { const w = win(); if (w) { w.prevMatch(); updateCount(); } input.focus(); });
+
+  // ⌘F / Ctrl+F focuses the find bar instead of the browser's (useless here,
+  // since only a few pages are mounted) when a transcript is open.
+  document.addEventListener('keydown', (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'f' &&
+        state.mode === 'sessions' && state.currentSessionId) {
+      e.preventDefault();
+      input.focus();
+      input.select();
+    }
+  });
+
+  window._resetFind = () => { input.value = ''; count.textContent = ''; };
+})();
 
 const PAGE_SIZE = 20;     // turns per page
 const WINDOW_PAGES = 3;   // pages kept mounted at once (prev / current / next)
@@ -1504,20 +1592,24 @@ function renderSession(data, restore) {
   panel.innerHTML = '';
 
   const nav = document.getElementById('session-nav');
+  const find = document.getElementById('session-find');
+  if (window._resetFind) window._resetFind();
   if (!data.turns || data.turns.length === 0) {
     panel.innerHTML = '<div id="welcome"><p>No prose in this session.</p></div>';
     nav.style.display = 'none';
+    find.style.display = 'none';
     state.sessionRender = null;
     return;
   }
   nav.style.display = '';
+  find.style.display = '';
   const win = createSessionWindow(panel, data.turns);
   state.sessionRender = win;
 
   // Restore reading position after a live reload.
   if (restore) {
     if (restore.atEnd) win.jumpEnd();
-    else if (restore.frac) win.scrollToFrac(restore.frac);
+    else if (restore.turn != null) win.scrollToTurn(restore.turn);
   }
 }
 
@@ -1532,6 +1624,9 @@ function renderSession(data, restore) {
 function createSessionWindow(panel, turns) {
   const pageCount = Math.ceil(turns.length / PAGE_SIZE);
   let winStart = 0, winEnd = -1;
+  let query = '';      // active find query (lower-cased)
+  let matches = [];    // turn indices containing the query
+  let matchIdx = -1;   // current position within matches
 
   const pageStart = p => p * PAGE_SIZE;
   const pageEnd   = p => Math.min((p + 1) * PAGE_SIZE, turns.length); // exclusive
@@ -1566,7 +1661,7 @@ function createSessionWindow(panel, turns) {
     const el = document.createElement('div');
     el.className = 'turn-page';
     el.dataset.page = p;
-    for (let i = pageStart(p); i < pageEnd(p); i++) el.appendChild(buildTurn(turns[i]));
+    for (let i = pageStart(p); i < pageEnd(p); i++) el.appendChild(buildTurn(turns[i], i, query));
     return el;
   }
   function pages() { return panel.querySelectorAll('.turn-page'); }
@@ -1625,17 +1720,25 @@ function createSessionWindow(panel, turns) {
 
   function adjust() {
     const st = panel.scrollTop, vh = panel.clientHeight;
-    const center = pageAtY(st + vh / 2);
-    // Big jump (scrollbar drag into a spacer): re-center, then snap scrollTop to
-    // the top of the new window so it stays consistent with the spacers and
-    // can't trigger a follow-on jump.
-    if (center < winStart - 1 || center > winEnd + 1) {
-      setWindow(center - 1, center + 1);
-      panel.scrollTop = topH();
-      updatePos();
-      return;
+    const centerY = st + vh / 2;
+    // Decide using the REAL mounted geometry, not the estimate. The mounted
+    // pages occupy [topH(), botSpacer.offsetTop) in scroll coordinates.
+    // If the viewport centre is inside a spacer (e.g. a scrollbar drag landed
+    // far from the mounted window), re-center the window from the estimate and
+    // snap to its top. If it's within mounted content (normal scrolling, or a
+    // programmatic scrollIntoView), only prefetch at the edges — never jump,
+    // so estimate/real mismatches can't yank the viewport.
+    const mountedTop = topH();
+    const mountedBot = botSpacer.offsetTop;
+    if (centerY < mountedTop || centerY > mountedBot) {
+      const center = pageAtY(centerY);
+      if (center < winStart || center > winEnd) {
+        setWindow(center - 1, center + 1);
+        panel.scrollTop = topH();
+        updatePos();
+        return;
+      }
     }
-    // Otherwise prefetch one page past the visible edge as needed.
     let guard = 0;
     while (guard++ < WINDOW_PAGES + 1) {
       if (winEnd < pageCount - 1 && st + vh * 2 >= botSpacer.offsetTop) { shiftDown(); continue; }
@@ -1681,9 +1784,74 @@ function createSessionWindow(panel, turns) {
     updatePos();
   }
 
+  // The index of the topmost turn currently in view — a stable anchor to
+  // preserve reading position across a re-render (e.g. a live reload), since
+  // turn indices don't shift when content is only appended.
+  function topVisibleTurn() {
+    const top = panel.getBoundingClientRect().top;
+    for (const el of panel.querySelectorAll('.turn')) {
+      if (el.getBoundingClientRect().bottom > top + 1) return +el.dataset.turn;
+    }
+    return winStart * PAGE_SIZE;
+  }
+  // Mount the page holding a turn and align that turn to the top (or centre).
+  function scrollToTurn(turnIdx, center) {
+    const page = Math.floor(turnIdx / PAGE_SIZE);
+    setWindow(page - 1, page + 1);
+    const el = panel.querySelector(`.turn[data-turn="${turnIdx}"]`);
+    if (el) el.scrollIntoView({ block: center ? 'center' : 'start' });
+    updatePos();
+  }
+
+  // ── In-transcript search ──────────────────────────────
+  // Search runs over the full turns array (all in memory), independent of which
+  // pages happen to be mounted. setSearch returns the number of matching turns.
+  function setSearch(q) {
+    query = (q || '').toLowerCase();
+    matches = [];
+    if (query) {
+      for (let i = 0; i < turns.length; i++) {
+        if ((turns[i].text || '').toLowerCase().includes(query)) matches.push(i);
+      }
+    }
+    matchIdx = -1;
+    setWindow(winStart, winEnd); // re-render mounted pages to apply/clear marks
+    return matches.length;
+  }
+  // Jump to match number i (wraps around), mounting its page and scrolling the
+  // turn into view with its hits flagged active.
+  function gotoMatch(i) {
+    if (!matches.length) return;
+    matchIdx = ((i % matches.length) + matches.length) % matches.length;
+    const turnIdx = matches[matchIdx];
+    const page = Math.floor(turnIdx / PAGE_SIZE);
+    setWindow(page - 1, page + 1);
+    const turnEl = panel.querySelector(`.turn[data-turn="${turnIdx}"]`);
+    if (turnEl) {
+      const hits = turnEl.querySelectorAll('mark.search-hit');
+      hits.forEach(m => m.classList.add('search-hit-active'));
+      // Scroll the matched text itself into view (not the whole turn, which can
+      // be taller than the viewport). Fall back to the turn if the match was in
+      // a code span whose <mark> was dropped by syntax highlighting. We do NOT
+      // call adjust() here — its estimate-based recentering would fight this.
+      (hits[0] || turnEl).scrollIntoView({ block: 'center' });
+    }
+    updatePos();
+  }
+  function searchInfo() {
+    return { count: matches.length, index: matchIdx, query };
+  }
+
   return {
     jumpEnd,
     scrollToFrac,
+    topVisibleTurn,
+    scrollToTurn,
+    setSearch,
+    gotoMatch,
+    nextMatch: () => gotoMatch(matchIdx + 1),
+    prevMatch: () => gotoMatch(matchIdx - 1),
+    searchInfo,
     destroy() {
       panel.removeEventListener('scroll', onScroll);
       document.removeEventListener('keydown', onKey);
@@ -1693,11 +1861,12 @@ function createSessionWindow(panel, turns) {
   };
 }
 
-function buildTurn(turn) {
+function buildTurn(turn, index, query) {
   const el = document.createElement('div');
   el.className = 'turn turn-' + turn.role +
     (turn.sidechain ? ' turn-sidechain' : '') +
     (turn.compact ? ' turn-compact' : '');
+  if (index != null) el.dataset.turn = index;
   const role = document.createElement('div');
   role.className = 'turn-role';
   role.textContent = turn.compact ? 'Compaction summary' : (turn.role === 'user' ? 'You' : 'Claude');
@@ -1709,9 +1878,39 @@ function buildTurn(turn) {
   body.innerHTML = turn.role === 'assistant'
     ? marked.parse(turn.text)
     : marked.parse(turn.text, { breaks: true });
+  if (query) highlightMatches(body, query);
   el.appendChild(role);
   el.appendChild(body);
   return el;
+}
+
+// Wrap every occurrence of `query` (already lower-cased) in <mark>, walking
+// text nodes only so the rendered markup stays intact. Code spans re-tokenised
+// later by highlight.js may drop their marks, but prose matches persist.
+function highlightMatches(root, query) {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode(n) {
+      return n.nodeValue && n.nodeValue.toLowerCase().includes(query)
+        ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+    },
+  });
+  const nodes = [];
+  while (walker.nextNode()) nodes.push(walker.currentNode);
+  for (const node of nodes) {
+    const text = node.nodeValue, lower = text.toLowerCase();
+    const frag = document.createDocumentFragment();
+    let i = 0, from = 0;
+    while ((i = lower.indexOf(query, from)) !== -1) {
+      if (i > from) frag.appendChild(document.createTextNode(text.slice(from, i)));
+      const mark = document.createElement('mark');
+      mark.className = 'search-hit';
+      mark.textContent = text.slice(i, i + query.length);
+      frag.appendChild(mark);
+      from = i + query.length;
+    }
+    if (from < text.length) frag.appendChild(document.createTextNode(text.slice(from)));
+    node.parentNode.replaceChild(frag, node);
+  }
 }
 
 // ── Search ───────────────────────────────────────────────
