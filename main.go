@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"embed"
 	"encoding/json"
@@ -15,6 +16,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -38,6 +40,60 @@ type SearchResult struct {
 	File    string `json:"file"`
 	Line    int    `json:"line"`
 	Snippet string `json:"snippet"`
+}
+
+// SessionInfo is the listing metadata for one Claude Code transcript (.jsonl).
+type SessionInfo struct {
+	ID       string `json:"id"`      // relative "<encodedDir>/<uuid>.jsonl"
+	Title    string `json:"title"`   // first human prompt, truncated
+	Project  string `json:"project"` // real cwd read from inside the file
+	Size     int64  `json:"size"`
+	Modified string `json:"modified"` // RFC3339
+	ModUnix  int64  `json:"modUnix"`
+}
+
+// SessionGroup buckets sessions under their project (cwd).
+type SessionGroup struct {
+	Project  string        `json:"project"`
+	Sessions []SessionInfo `json:"sessions"`
+}
+
+// Turn is one piece of prose in a transcript: a human prompt or assistant text.
+type Turn struct {
+	Role      string `json:"role"` // "user" | "assistant"
+	Text      string `json:"text"`
+	Timestamp string `json:"timestamp,omitempty"`
+	Sidechain bool   `json:"sidechain,omitempty"` // from a subagent
+}
+
+// SessionData is the parsed, prose-only transcript returned to the client.
+type SessionData struct {
+	ID      string `json:"id"`
+	Project string `json:"project"`
+	Title   string `json:"title"`
+	Turns   []Turn `json:"turns"`
+}
+
+// rawRecord decodes only the fields we need from a transcript line. Lines we
+// don't care about (file-history-snapshot, permission-mode, ...) have no
+// "message" field, so Message stays empty and decoding is cheap.
+type rawRecord struct {
+	Type        string          `json:"type"`
+	IsMeta      bool            `json:"isMeta"`
+	IsSidechain bool            `json:"isSidechain"`
+	Timestamp   string          `json:"timestamp"`
+	Cwd         string          `json:"cwd"`
+	Message     json.RawMessage `json:"message"`
+}
+
+type rawMessage struct {
+	Role    string          `json:"role"`
+	Content json.RawMessage `json:"content"`
+}
+
+type contentBlock struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
 }
 
 // Broker manages SSE clients.
@@ -119,6 +175,14 @@ func main() {
 	mux.HandleFunc("/api/search", handleSearch(absDir))
 	mux.HandleFunc("/api/config", handleConfig(initialFile))
 	mux.HandleFunc("/events", handleSSE(broker))
+
+	// Claude Code transcript browsing (~/.claude/projects).
+	if projectsDir, err := claudeProjectsDir(); err == nil {
+		mux.HandleFunc("/api/sessions", handleSessions(projectsDir))
+		mux.HandleFunc("/api/session", handleSession(projectsDir))
+	} else {
+		log.Printf("session browsing disabled: %v", err)
+	}
 
 	// Bind to a random localhost port.
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -343,6 +407,302 @@ func handleSSE(broker *Broker) http.HandlerFunc {
 			}
 		}
 	}
+}
+
+// ── Claude Code session browsing ────────────────────────────────────────
+
+func claudeProjectsDir() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	dir := filepath.Join(home, ".claude", "projects")
+	if _, err := os.Stat(dir); err != nil {
+		return "", fmt.Errorf("%s not found", dir)
+	}
+	return dir, nil
+}
+
+// metaScanBudget bounds how many bytes we read per file when building the
+// session list, so a giant snapshot near the top of a file can't stall listing.
+const metaScanBudget = 256 * 1024
+
+// titleMaxLen caps the human-prompt title shown in the session list.
+const titleMaxLen = 100
+
+// handleSessions lists every transcript grouped by project, newest first.
+func handleSessions(projectsDir string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		entries, err := os.ReadDir(projectsDir)
+		if err != nil {
+			http.Error(w, err.Error(), 500)
+			return
+		}
+
+		byProject := map[string][]SessionInfo{}
+		for _, dirEnt := range entries {
+			if !dirEnt.IsDir() {
+				continue
+			}
+			subDir := filepath.Join(projectsDir, dirEnt.Name())
+			files, err := os.ReadDir(subDir)
+			if err != nil {
+				continue
+			}
+			for _, f := range files {
+				if f.IsDir() || !strings.HasSuffix(f.Name(), ".jsonl") {
+					continue
+				}
+				info, err := f.Info()
+				if err != nil {
+					continue
+				}
+				abs := filepath.Join(subDir, f.Name())
+				project, title := scanSessionMeta(abs, dirEnt.Name())
+				si := SessionInfo{
+					ID:       dirEnt.Name() + "/" + f.Name(),
+					Title:    title,
+					Project:  project,
+					Size:     info.Size(),
+					Modified: info.ModTime().UTC().Format(time.RFC3339),
+					ModUnix:  info.ModTime().Unix(),
+				}
+				byProject[project] = append(byProject[project], si)
+			}
+		}
+
+		groups := make([]SessionGroup, 0, len(byProject))
+		for project, sessions := range byProject {
+			sort.Slice(sessions, func(i, j int) bool { return sessions[i].ModUnix > sessions[j].ModUnix })
+			groups = append(groups, SessionGroup{Project: project, Sessions: sessions})
+		}
+		// Projects ordered by their most-recently-touched session.
+		sort.Slice(groups, func(i, j int) bool {
+			return groups[i].Sessions[0].ModUnix > groups[j].Sessions[0].ModUnix
+		})
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(groups)
+	}
+}
+
+// scanSessionMeta reads the head of a transcript to recover its real cwd and
+// first human prompt. Falls back to a decoded directory name / "(untitled)".
+func scanSessionMeta(abs, encodedDir string) (project, title string) {
+	f, err := os.Open(abs)
+	if err != nil {
+		return decodeProjectDir(encodedDir), "(unreadable)"
+	}
+	defer f.Close()
+
+	reader := bufio.NewReader(io.LimitReader(f, metaScanBudget))
+	for {
+		line, err := reader.ReadBytes('\n')
+		if len(line) > 0 {
+			var rec rawRecord
+			if json.Unmarshal(line, &rec) == nil {
+				if project == "" && rec.Cwd != "" {
+					project = rec.Cwd
+				}
+				if title == "" && rec.Type == "user" && !rec.IsMeta {
+					if t := userPromptText(rec.Message); t != "" {
+						title = truncate(t, titleMaxLen)
+					}
+				}
+			}
+		}
+		if (project != "" && title != "") || err != nil {
+			break
+		}
+	}
+	if project == "" {
+		project = decodeProjectDir(encodedDir)
+	}
+	if title == "" {
+		title = "(no prompt)"
+	}
+	return project, title
+}
+
+// decodeProjectDir is a best-effort reversal of Claude's "/" → "-" encoding.
+// It is ambiguous (paths may contain "-"), so it's only a fallback when the
+// real cwd can't be read from inside the file.
+func decodeProjectDir(name string) string {
+	return strings.ReplaceAll(name, "-", "/")
+}
+
+// sessionCacheEntry memoises a parsed transcript, keyed by file identity.
+type sessionCacheEntry struct {
+	modUnix int64
+	size    int64
+	data    *SessionData
+}
+
+var sessCache sync.Map // abs path -> *sessionCacheEntry
+
+// handleSession returns the prose-only turns of one transcript.
+func handleSession(projectsDir string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := r.URL.Query().Get("id")
+		if id == "" {
+			http.Error(w, "missing id", 400)
+			return
+		}
+		abs, ok := safeAbs(projectsDir, id)
+		if !ok {
+			http.Error(w, "forbidden", 403)
+			return
+		}
+		info, err := os.Stat(abs)
+		if err != nil {
+			http.Error(w, "not found", 404)
+			return
+		}
+
+		// Serve from cache when the file is unchanged (transcripts are append-only).
+		if v, ok := sessCache.Load(abs); ok {
+			e := v.(*sessionCacheEntry)
+			if e.modUnix == info.ModTime().Unix() && e.size == info.Size() {
+				writeJSON(w, e.data)
+				return
+			}
+		}
+
+		data, err := parseSession(abs, id)
+		if err != nil {
+			http.Error(w, err.Error(), 500)
+			return
+		}
+		sessCache.Store(abs, &sessionCacheEntry{
+			modUnix: info.ModTime().Unix(),
+			size:    info.Size(),
+			data:    data,
+		})
+		writeJSON(w, data)
+	}
+}
+
+// parseSession streams a transcript and extracts human prompts + assistant
+// text, discarding tool calls, tool results, thinking and bookkeeping records.
+func parseSession(abs, id string) (*SessionData, error) {
+	f, err := os.Open(abs)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	data := &SessionData{ID: id}
+	reader := bufio.NewReader(f)
+	for {
+		line, readErr := reader.ReadBytes('\n')
+		if len(line) > 0 {
+			// Cheap pre-filter: only user/assistant lines can yield prose.
+			if bytes.Contains(line, []byte(`"type":"user"`)) || bytes.Contains(line, []byte(`"type":"assistant"`)) {
+				if turn, ok := turnFromLine(line); ok {
+					if data.Project == "" {
+						// cwd lives on these records; capture it once.
+						var rec rawRecord
+						if json.Unmarshal(line, &rec) == nil {
+							data.Project = rec.Cwd
+						}
+					}
+					if data.Title == "" && turn.Role == "user" {
+						data.Title = truncate(turn.Text, titleMaxLen)
+					}
+					data.Turns = append(data.Turns, turn)
+				}
+			}
+		}
+		if readErr != nil {
+			break
+		}
+	}
+	return data, nil
+}
+
+// turnFromLine extracts a single prose Turn from a transcript line, or false.
+func turnFromLine(line []byte) (Turn, bool) {
+	var rec rawRecord
+	if json.Unmarshal(line, &rec) != nil || rec.IsMeta || len(rec.Message) == 0 {
+		return Turn{}, false
+	}
+	var msg rawMessage
+	if json.Unmarshal(rec.Message, &msg) != nil {
+		return Turn{}, false
+	}
+
+	switch rec.Type {
+	case "user":
+		text := userPromptText(rec.Message)
+		if text == "" || isNoisePrompt(text) {
+			return Turn{}, false
+		}
+		return Turn{Role: "user", Text: text, Timestamp: rec.Timestamp, Sidechain: rec.IsSidechain}, true
+	case "assistant":
+		var blocks []contentBlock
+		if json.Unmarshal(msg.Content, &blocks) != nil {
+			return Turn{}, false
+		}
+		var sb strings.Builder
+		for _, b := range blocks {
+			if b.Type == "text" && strings.TrimSpace(b.Text) != "" {
+				if sb.Len() > 0 {
+					sb.WriteString("\n\n")
+				}
+				sb.WriteString(b.Text)
+			}
+		}
+		if sb.Len() == 0 {
+			return Turn{}, false
+		}
+		return Turn{Role: "assistant", Text: sb.String(), Timestamp: rec.Timestamp, Sidechain: rec.IsSidechain}, true
+	}
+	return Turn{}, false
+}
+
+// userPromptText returns the human prompt text when a user message's content is
+// a plain string. List-shaped content (tool results) is intentionally skipped.
+func userPromptText(rawMsg json.RawMessage) string {
+	if len(rawMsg) == 0 {
+		return ""
+	}
+	var msg rawMessage
+	if json.Unmarshal(rawMsg, &msg) != nil {
+		return ""
+	}
+	var s string
+	if json.Unmarshal(msg.Content, &s) != nil {
+		return "" // content was an array (tool_result), not a prompt
+	}
+	return strings.TrimSpace(s)
+}
+
+// isNoisePrompt filters slash-command plumbing and system scaffolding that is
+// stored as user text but isn't something a person typed as prose.
+func isNoisePrompt(s string) bool {
+	switch {
+	case strings.HasPrefix(s, "<command-name>"),
+		strings.HasPrefix(s, "<command-message>"),
+		strings.HasPrefix(s, "<local-command-stdout>"),
+		strings.HasPrefix(s, "Caveat: The messages below"),
+		strings.HasPrefix(s, "<bash-input>"),
+		strings.HasPrefix(s, "<bash-stdout>"):
+		return true
+	}
+	return false
+}
+
+func truncate(s string, n int) string {
+	s = strings.TrimSpace(strings.ReplaceAll(s, "\n", " "))
+	if len(s) <= n {
+		return s
+	}
+	return strings.TrimSpace(s[:n]) + "…"
+}
+
+func writeJSON(w http.ResponseWriter, v interface{}) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(v)
 }
 
 func watchDir(root string, broker *Broker) {

@@ -46,7 +46,7 @@
     // Core keywords → blue / keyword colour
     const KEYWORDS = {
       scope: 'keyword',
-      match: /\b(claim|evident|assert|when|otherwise|with|as|then|else|find|all|minimizing|where)\b/,
+      match: /\b(schema|claim|evident|assert|when|otherwise|with|as|then|else|find|all|some|one|none|minimizing|where|not|and|or|true|false)\b/,
     };
 
     // Fix #1: After `claim` or `evident`, highlight the next word as a function name.
@@ -74,24 +74,24 @@
       relevance: 2,
     };
 
-    // Unicode membership operators → operator colour
+    // Unicode membership and relational operators → operator colour
     const UNICODE_MEMBERSHIP = {
       scope: 'operator',
-      match: /∈|∉/,
+      match: /∈|∉|⊆|⊇|∨|∧|≤|≥|≠|×|·/,
       relevance: 1,
     };
 
-    // Punctuation operators (includes | explicitly)
+    // Punctuation operators (includes | explicitly; \.\. for range/passthrough; \\ for set diff)
     const OPERATOR = {
       scope: 'operator',
-      match: /->|<=|>=|!=|[|:=+\-*<>]/,
+      match: /->|<=|>=|!=|\.\.|[|:=+\-*<>\\]/,
       relevance: 0,
     };
 
-    // Word operators: in, starts_with
+    // Word operators: in, not_in, subset, superset, mapsto, bowtie, starts_with
     const WORD_OPERATOR = {
       scope: 'operator',
-      match: /\b(in|starts_with)\b/,
+      match: /\b(in|not_in|subset|superset|mapsto|bowtie|starts_with)\b/,
     };
 
     // Top-level predicate names: lowercase identifier at the very start of a line
@@ -203,6 +203,119 @@
   }
 
   hljs.registerLanguage('evident', evident);
+})();
+</script>
+<script>
+/* ── SMT-LIB language support (SMT-LIB 2.6) ───────────────────────────── */
+(function () {
+  'use strict';
+
+  // Shared word lists, reused by the highlight.js definition (rendered view)
+  // and the CodeMirror stream parser (editor). Based on the SMT-LIB 2.6 standard.
+  const WORDS = {
+    // Top-level script commands
+    commands: [
+      'assert', 'check-sat', 'check-sat-assuming', 'declare-const', 'declare-datatype',
+      'declare-datatypes', 'declare-fun', 'declare-sort', 'define-fun', 'define-fun-rec',
+      'define-funs-rec', 'define-sort', 'echo', 'exit', 'get-assertions', 'get-assignment',
+      'get-info', 'get-model', 'get-option', 'get-proof', 'get-unsat-assumptions',
+      'get-unsat-core', 'get-value', 'pop', 'push', 'reset', 'reset-assertions',
+      'set-info', 'set-logic', 'set-option',
+    ],
+    // Binders and reserved words of the term language
+    binders: ['let', 'forall', 'exists', 'match', 'par', 'as', '!', '_'],
+    // Core logical connectives (highlighted like keywords)
+    logical: ['and', 'or', 'not', 'xor', '=>', '=', 'distinct', 'ite'],
+    // Theory function symbols (Core, Ints/Reals, Arrays, BitVectors, Strings,
+    // RegEx, FloatingPoint). Not exhaustive, but covers the standard theories.
+    builtins: [
+      // arithmetic / comparison
+      '+', '-', '*', '/', 'div', 'mod', 'rem', 'abs', '^', '<', '<=', '>', '>=',
+      'to_real', 'to_int', 'is_int', 'divisible',
+      // arrays
+      'select', 'store',
+      // bit-vectors
+      'concat', 'extract', 'bvnot', 'bvand', 'bvor', 'bvnand', 'bvnor', 'bvxor',
+      'bvxnor', 'bvneg', 'bvadd', 'bvsub', 'bvmul', 'bvudiv', 'bvurem', 'bvsdiv',
+      'bvsrem', 'bvsmod', 'bvshl', 'bvlshr', 'bvashr', 'bvult', 'bvule', 'bvugt',
+      'bvuge', 'bvslt', 'bvsle', 'bvsgt', 'bvsge', 'bvcomp', 'repeat', 'zero_extend',
+      'sign_extend', 'rotate_left', 'rotate_right', 'bv2nat', 'nat2bv',
+      // strings
+      'str.++', 'str.len', 'str.at', 'str.substr', 'str.prefixof', 'str.suffixof',
+      'str.contains', 'str.indexof', 'str.replace', 'str.replace_all', 'str.to_int',
+      'str.from_int', 'str.to_code', 'str.from_code', 'str.to_re', 'str.in_re',
+      'str.<', 'str.<=', 'str.is_digit',
+      // regular expressions
+      're.none', 're.all', 're.allchar', 're.++', 're.union', 're.inter', 're.*',
+      're.+', 're.opt', 're.range', 're.comp', 're.diff', 're.loop',
+      // floating point
+      'fp', 'fp.abs', 'fp.neg', 'fp.add', 'fp.sub', 'fp.mul', 'fp.div', 'fp.fma',
+      'fp.sqrt', 'fp.rem', 'fp.roundToIntegral', 'fp.min', 'fp.max', 'fp.leq',
+      'fp.lt', 'fp.geq', 'fp.gt', 'fp.eq', 'fp.isNormal', 'fp.isSubnormal',
+      'fp.isZero', 'fp.isInfinite', 'fp.isNaN', 'fp.isNegative', 'fp.isPositive',
+      'fp.to_real', 'fp.to_sbv', 'fp.to_ubv',
+    ],
+    // Sort (type) names
+    sorts: [
+      'Bool', 'Int', 'Real', 'BitVec', 'Array', 'String', 'RegLan', 'RoundingMode',
+      'FloatingPoint', 'Float16', 'Float32', 'Float64', 'Float128', 'Set', 'Seq', 'Bag',
+    ],
+    // Literal constants
+    literals: [
+      'true', 'false', 'roundNearestTiesToEven', 'roundNearestTiesToAway',
+      'roundTowardPositive', 'roundTowardNegative', 'roundTowardZero',
+      'RNE', 'RNA', 'RTP', 'RTN', 'RTZ',
+    ],
+  };
+  window.SMT_WORDS = WORDS;
+
+  /** @param {import('highlight.js').HLJSApi} hljs */
+  function smt(hljs) {
+    const COMMENT = { scope: 'comment', begin: /;/, end: /$/, relevance: 0 };
+
+    // String literal — the only escape is "" (a doubled quote).
+    const STRING = {
+      scope: 'string',
+      begin: /"/, end: /"/,
+      contains: [{ begin: /""/ }],
+      relevance: 0,
+    };
+
+    // |quoted symbol| — may span lines; contains anything but | and \
+    const QUOTED_SYMBOL = { scope: 'symbol', begin: /\|/, end: /\|/, relevance: 0 };
+
+    // :attribute keywords (e.g. :named, :pattern, :status)
+    const ATTRIBUTE = {
+      scope: 'symbol',
+      match: /:[A-Za-z0-9+\-*/=%?!.$_~&^<>@]+/,
+      relevance: 0,
+    };
+
+    // Numerals, decimals, hexadecimal (#x..) and binary (#b..) literals
+    const NUMBER = {
+      scope: 'number',
+      match: /#x[0-9a-fA-F]+|#b[01]+|\b\d+(?:\.\d+)?\b/,
+      relevance: 0,
+    };
+
+    return {
+      name: 'SMT-LIB',
+      aliases: ['smt', 'smt2', 'smtlib'],
+      case_insensitive: false,
+      keywords: {
+        // An SMT-LIB "simple symbol": letters, digits and a set of punctuation,
+        // not starting with a digit. Used to tokenise candidate keywords.
+        $pattern: /[A-Za-z0-9+\-*/=%?!.$_~&^<>@]+/,
+        keyword: WORDS.commands.concat(WORDS.binders, WORDS.logical).join(' '),
+        built_in: WORDS.builtins.join(' '),
+        type: WORDS.sorts.join(' '),
+        literal: WORDS.literals.join(' '),
+      },
+      contains: [COMMENT, STRING, QUOTED_SYMBOL, ATTRIBUTE, NUMBER],
+    };
+  }
+
+  if (typeof hljs !== 'undefined') hljs.registerLanguage('smt', smt);
 })();
 </script>
 <script src="https://cdn.jsdelivr.net/npm/marked@12.0.0/marked.min.js"></script>
@@ -385,7 +498,8 @@ html, body { height: 100%; background: var(--bg); color: var(--fg); font-family:
 }
 
 /* Limit prose width for readability */
-#render-panel > * { max-width: 860px; }
+#render-panel > * { max-width: 860px; margin-left: auto; margin-right: auto; }
+#render-panel.full-width > * { max-width: none; }
 
 /* ── Markdown prose styles ─────────────────────────────── */
 #render-panel h1, #render-panel h2, #render-panel h3,
@@ -530,22 +644,117 @@ html, body { height: 100%; background: var(--bg); color: var(--fg); font-family:
 /* record field names and dot-access fields: slate blue */
 .language-evident .hljs-attr { color: #1d4ed8; }
 [data-theme="dark"] .language-evident .hljs-attr { color: #93c5fd; }
+
+/* ── Mode tabs (Files / Sessions) ─────────────────────────── */
+#mode-tabs { display: flex; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+.mode-tab {
+  flex: 1;
+  padding: 7px 8px;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--blockquote-fg);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.mode-tab:hover { background: var(--hover-bg); }
+.mode-tab.active { color: var(--active-fg); border-bottom-color: var(--active-fg); }
+
+/* ── Session list ─────────────────────────────────────────── */
+#session-list { flex: 1; overflow-y: auto; padding: 6px 0; display: none; }
+.session-group { margin-bottom: 4px; }
+.session-group-label {
+  display: block;
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--blockquote-fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  position: sticky;
+  top: 0;
+  background: var(--sidebar-bg);
+}
+.session-item {
+  padding: 4px 10px 5px 16px;
+  cursor: pointer;
+  border-radius: 3px;
+  margin: 1px 4px;
+}
+.session-item:hover { background: var(--hover-bg); }
+.session-item.active { background: var(--active-bg); }
+.session-title {
+  display: block;
+  font-size: 12px;
+  color: var(--fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.session-item.active .session-title { color: var(--active-fg); }
+.session-meta { display: block; font-size: 10px; color: var(--blockquote-fg); }
+
+/* ── Transcript turns ─────────────────────────────────────── */
+.turn { max-width: 860px; margin: 0 auto 4px; border-radius: 8px; }
+#render-panel.full-width .turn { max-width: none; }
+.turn-role {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--blockquote-fg);
+  margin-bottom: 2px;
+}
+.turn-user {
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  padding: 10px 16px;
+  margin-top: 18px;
+}
+.turn-user .turn-body { white-space: pre-wrap; word-wrap: break-word; }
+.turn-assistant { padding: 4px 16px 12px; }
+.turn-sidechain { border-left: 3px solid var(--active-fg); }
+.turn-sidechain .turn-role::after { content: ' · subagent'; font-weight: 400; text-transform: none; }
+/* Keep prose width rules from applying twice inside turns */
+#render-panel .turn > * { max-width: none; margin-left: 0; margin-right: 0; }
+/* Windowed transcript spacers stand in for un-mounted pages so the scrollbar
+   reflects the whole conversation. They must not be width-constrained. */
+#turn-top-spacer, #turn-bottom-spacer { max-width: none !important; margin: 0 !important; }
+.turn-page { max-width: none !important; margin: 0 !important; }
+
+/* Toolbar session navigation */
+#session-nav { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+#sess-pos { font-size: 12px; color: var(--blockquote-fg); white-space: nowrap; font-variant-numeric: tabular-nums; }
 </style>
 </head>
 <body>
 
 <div id="app">
   <aside id="sidebar">
+    <div id="mode-tabs">
+      <button class="mode-tab active" id="tab-files" data-mode="files">Files</button>
+      <button class="mode-tab" id="tab-sessions" data-mode="sessions">Sessions</button>
+    </div>
     <div id="search-box">
       <input id="search-input" type="text" placeholder="Search files..." autocomplete="off" spellcheck="false">
       <div id="search-results"></div>
     </div>
     <div id="file-tree"></div>
+    <div id="session-list"></div>
   </aside>
 
   <main id="content">
     <div id="toolbar">
       <span id="current-file-name"></span>
+      <span id="session-nav" style="display:none">
+        <span id="sess-pos" title="Position in transcript"></span>
+        <button class="toolbar-btn" id="sess-top" title="Jump to start (Home)">⏫ Start</button>
+        <button class="toolbar-btn" id="sess-end" title="Jump to end (End)">End ⏬</button>
+      </span>
+      <button class="toolbar-btn" id="width-toggle" title="Toggle full width"
+        onclick="(function(p){p.classList.toggle('full-width');localStorage.setItem('fullWidth',p.classList.contains('full-width')?'1':'0');})(document.getElementById('render-panel'))">↔</button>
       <button class="toolbar-btn" id="theme-toggle">Dark</button>
       <button class="toolbar-btn" id="edit-btn" style="display:none">Edit</button>
     </div>
@@ -586,9 +795,9 @@ window._cmPromise = Promise.all([
 // CM5 names like 'variable', 'def', 'builtin', 'type', 'property' create
 // anonymous unstyled tags and produce no highlighting.
 const _evidentParser = (() => {
-  const KEYWORDS = new Set(['claim','evident','assert','when','otherwise','with','as','then','else','find','all','minimizing','where','type']);
+  const KEYWORDS = new Set(['schema','claim','evident','assert','when','otherwise','with','as','then','else','find','all','some','one','none','minimizing','where','not','and','or','true','false','type']);
   const BUILTINS = new Set(['Prop','det','semidet','nondet','Nat','Int','Real','Bool','String','List','Maybe','Set','Type','Arrow','ForAll']);
-  const WORD_OPS = new Set(['in','starts_with']);
+  const WORD_OPS = new Set(['in','not_in','subset','superset','mapsto','bowtie','starts_with']);
   return {
     startState() { return { expectName: false, lineStart: false }; },
     copyState(s) { return { expectName: s.expectName, lineStart: s.lineStart }; },
@@ -618,13 +827,16 @@ const _evidentParser = (() => {
       if (stream.match('=>') || stream.match('⇒') || stream.match('->') ||
           stream.match('<=') || stream.match('>=') || stream.match('!=')) return 'operator';
       if (stream.match('∀') || stream.match('∃') || stream.match('¬')) return 'keyword';
-      if (stream.match('∈') || stream.match('∉')) return 'operator';
+      if (stream.match('∈') || stream.match('∉') || stream.match('⊆') || stream.match('⊇') ||
+          stream.match('∨') || stream.match('∧') || stream.match('≤') || stream.match('≥') ||
+          stream.match('≠') || stream.match('×') || stream.match('·')) return 'operator';
       // ASCII operators
-      if (stream.match(/^[|:=+\-*<>]/)) return 'operator';
+      if (stream.match(/^[|:=+\-*<>\\]/)) return 'operator';
       // Brackets / braces / parens
       if (stream.match(/^[\[\]{}()]/)) return 'bracket';
-      // Dot → field access
+      // Dot(s) — .. is range/passthrough operator, single . is field access
       if (stream.peek() === '.') {
+        if (stream.match('..')) return 'operator';
         stream.next();
         if (stream.match(/^[a-z_][A-Za-z0-9_]*/)) return 'propertyName';
         return null;
@@ -651,11 +863,87 @@ const _evidentParser = (() => {
   };
 })();
 
+// ── SMT-LIB stream parser for CodeMirror ────────────────
+// Token names must be @lezer/highlight tag property names (see _evidentParser).
+const _smtParser = (() => {
+  const W = (typeof window !== 'undefined' && window.SMT_WORDS) || {};
+  const COMMANDS = new Set([...(W.commands || []), ...(W.binders || []), ...(W.logical || [])]);
+  const BUILTINS = new Set(W.builtins || []);
+  const SORTS = new Set(W.sorts || []);
+  const LITERALS = new Set(W.literals || []);
+  const SYM = /[A-Za-z0-9+\-/*=%?!.$_~&^<>@]/;       // any symbol char
+  const SYM_START = /[A-Za-z+\-/*=%?!.$_~&^<>@]/;    // symbol char, not a digit
+  const OP_ONLY = /^[+\-/*=%?!.$~&^<>@]+$/;          // purely punctuation symbol
+  return {
+    startState() { return {}; },
+    copyState() { return {}; },
+    token(stream) {
+      if (stream.eatSpace()) return null;
+      const ch = stream.peek();
+
+      // Line comment
+      if (ch === ';') { stream.skipToEnd(); return 'comment'; }
+      // String literal — "" is the escaped double-quote
+      if (ch === '"') {
+        stream.next();
+        while (!stream.eol()) {
+          if (stream.next() === '"') {
+            if (stream.peek() === '"') stream.next(); else break;
+          }
+        }
+        return 'string';
+      }
+      // |quoted symbol|
+      if (ch === '|') {
+        stream.next();
+        while (!stream.eol()) { if (stream.next() === '|') break; }
+        return 'string';
+      }
+      // :attribute keyword
+      if (ch === ':') { stream.next(); stream.eatWhile(SYM); return 'meta'; }
+      // Hex / binary literals
+      if (ch === '#') {
+        stream.next();
+        const t = stream.next();
+        if (t === 'x') stream.eatWhile(/[0-9a-fA-F]/);
+        else if (t === 'b') stream.eatWhile(/[01]/);
+        return 'number';
+      }
+      // Numerals / decimals
+      if (/[0-9]/.test(ch)) {
+        stream.eatWhile(/[0-9]/);
+        if (stream.peek() === '.') { stream.next(); stream.eatWhile(/[0-9]/); }
+        return 'number';
+      }
+      // Parentheses
+      if (ch === '(' || ch === ')') { stream.next(); return 'bracket'; }
+      // Symbol token — classify by lookup
+      if (SYM_START.test(ch)) {
+        let w = '';
+        while (!stream.eol() && SYM.test(stream.peek())) w += stream.next();
+        if (COMMANDS.has(w)) return 'keyword';
+        if (LITERALS.has(w)) return 'bool';
+        if (SORTS.has(w)) return 'typeName';
+        if (BUILTINS.has(w)) return 'operatorKeyword';
+        if (/^[A-Z]/.test(w)) return 'typeName';   // user-declared sorts are capitalised by convention
+        if (OP_ONLY.test(w)) return 'operator';
+        return null;
+      }
+      stream.next();
+      return null;
+    },
+  };
+})();
+
 // ── State ───────────────────────────────────────────────
 const state = {
   currentPath: null,
   editorInstance: null,
   isEditing: false,
+  mode: 'files',          // 'files' | 'sessions'
+  sessionGroups: null,    // cached /api/sessions response
+  currentSessionId: null,
+  sessionRender: null,    // { turns, index, observer } for incremental rendering
 };
 
 // ── Extension → language map ────────────────────────────
@@ -671,10 +959,21 @@ const EXT_LANG_MAP = {
   ex: 'elixir', exs: 'elixir', lua: 'lua',
   xml: 'xml', dockerfile: 'dockerfile', makefile: 'makefile',
   tf: 'hcl', hcl: 'hcl', vim: 'vim', proto: 'protobuf',
+  smt: 'smt', smt2: 'smt',
 };
+
+// Extension used to pick syntax highlighting. Jinja2 templates (e.g.
+// foo.smt2.j2) are highlighted by their underlying file type.
+function highlightExt(path) {
+  const parts = path.toLowerCase().split('.');
+  let ext = parts.pop();
+  if (ext === 'j2' && parts.length > 1) ext = parts.pop();
+  return ext;
+}
 
 // ── Boot ────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
+  if (localStorage.getItem('fullWidth') === '1') document.getElementById('render-panel').classList.add('full-width');
   const savedTheme = localStorage.getItem('theme') || 'light';
   applyTheme(savedTheme, false);
 
@@ -705,35 +1004,54 @@ async function loadFileTree() {
     const res = await fetch('/api/files');
     const nodes = await res.json();
     const container = document.getElementById('file-tree');
+
+    // Snapshot which directories are currently open so we can restore that state
+    // after re-rendering. Without this, every reload collapses the whole tree.
+    const openDirs = new Set();
+    container.querySelectorAll('.tree-dir-wrap.open').forEach(el => {
+      if (el.dataset.path) openDirs.add(el.dataset.path);
+    });
+
     container.innerHTML = '';
     if (!nodes || nodes.length === 0) {
       container.innerHTML = '<div style="padding:12px;color:var(--blockquote-fg);font-size:12px;">No files found</div>';
       return;
     }
-    renderTreeNodes(nodes, container);
+    renderTreeNodes(nodes, container, openDirs);
+
+    if (state.currentPath) setActiveTreeItem(state.currentPath);
   } catch (e) {
     console.error('loadFileTree error:', e);
   }
 }
 
-function renderTreeNodes(nodes, container) {
+function renderTreeNodes(nodes, container, openDirs) {
   for (const node of nodes) {
     if (node.isDir) {
       const wrap = document.createElement('div');
       wrap.className = 'tree-dir-wrap';
+      wrap.dataset.path = node.path;
 
       const label = document.createElement('div');
       label.className = 'tree-dir-label';
       label.textContent = node.name;
-      label.onclick = () => {
-        label.classList.toggle('open');
-        children.classList.toggle('open');
-      };
 
       const children = document.createElement('div');
       children.className = 'tree-dir-children';
       if (node.children && node.children.length > 0) {
-        renderTreeNodes(node.children, children);
+        renderTreeNodes(node.children, children, openDirs);
+      }
+
+      label.onclick = () => {
+        const isOpen = wrap.classList.toggle('open');
+        label.classList.toggle('open', isOpen);
+        children.classList.toggle('open', isOpen);
+      };
+
+      if (openDirs && openDirs.has(node.path)) {
+        wrap.classList.add('open');
+        label.classList.add('open');
+        children.classList.add('open');
       }
 
       wrap.appendChild(label);
@@ -762,6 +1080,9 @@ function setActiveTreeItem(path) {
         parent.classList.add('open');
         const label = parent.previousElementSibling;
         if (label) label.classList.add('open');
+        if (parent.parentElement && parent.parentElement.classList.contains('tree-dir-wrap')) {
+          parent.parentElement.classList.add('open');
+        }
       }
       parent = parent.parentElement;
     }
@@ -773,6 +1094,13 @@ async function openFile(path, fromPopstate) {
   if (state.isEditing) {
     await exitEditMode(false);
   }
+  // Leaving any open transcript: detach its scroll/key listeners and hide nav.
+  if (state.sessionRender && state.sessionRender.destroy) {
+    state.sessionRender.destroy();
+    state.sessionRender = null;
+  }
+  state.currentSessionId = null;
+  document.getElementById('session-nav').style.display = 'none';
   state.currentPath = path;
 
   // Update URL so the link is copy-pasteable.
@@ -799,7 +1127,7 @@ async function openFile(path, fromPopstate) {
 
 // ── Render ───────────────────────────────────────────────
 async function renderFile(path, text) {
-  const ext = path.split('.').pop().toLowerCase();
+  const ext = highlightExt(path);
   const isMd = ext === 'md' || ext === 'markdown';
   const lang = EXT_LANG_MAP[ext] || ext;
 
@@ -811,11 +1139,20 @@ async function renderFile(path, text) {
 
   panel.innerHTML = marked.parse(mdSource);
 
-  // Syntax highlight
-  panel.querySelectorAll('pre code').forEach(el => hljs.highlightElement(el));
+  await enhance(panel);
 
-  // Mermaid
-  const mermaidNodes = panel.querySelectorAll('div.mermaid');
+  // Restore scroll after mermaid (SVG expansion may change scrollHeight)
+  panel.scrollTop = scrollFraction * panel.scrollHeight;
+}
+
+// enhance applies syntax highlighting and renders mermaid diagrams within a
+// container. It skips nodes already processed, so it's safe to call repeatedly
+// on a growing container (incremental session rendering).
+async function enhance(root) {
+  root.querySelectorAll('pre code').forEach(el => {
+    if (el.dataset.highlighted !== 'yes') hljs.highlightElement(el);
+  });
+  const mermaidNodes = root.querySelectorAll('div.mermaid:not([data-processed])');
   if (mermaidNodes.length > 0) {
     try {
       await mermaid.run({ nodes: mermaidNodes });
@@ -823,9 +1160,6 @@ async function renderFile(path, text) {
       console.warn('mermaid render error:', e);
     }
   }
-
-  // Restore scroll after mermaid (SVG expansion may change scrollHeight)
-  panel.scrollTop = scrollFraction * panel.scrollHeight;
 }
 
 function escHtml(str) {
@@ -894,7 +1228,7 @@ async function enterEditMode() {
   }
 
   const isDark = document.documentElement.dataset.theme === 'dark';
-  const ext = state.currentPath.split('.').pop().toLowerCase();
+  const ext = highlightExt(state.currentPath);
   const isMd = ext === 'md' || ext === 'markdown';
 
   // Pick language extension for this file type.
@@ -906,9 +1240,17 @@ async function enterEditMode() {
       alias: ['ev'],
       load() { return Promise.resolve(new LanguageSupport(StreamLanguage.define(_evidentParser))); },
     });
-    langExt = markdown({ codeLanguages: [evidentDesc, ...languages] });
+    const smtDesc = LanguageDescription.of({
+      name: 'SMT',
+      alias: ['smt', 'smt2', 'smtlib', 'smt-lib'],
+      extensions: ['smt', 'smt2'],
+      load() { return Promise.resolve(new LanguageSupport(StreamLanguage.define(_smtParser))); },
+    });
+    langExt = markdown({ codeLanguages: [evidentDesc, smtDesc, ...languages] });
   } else if (ext === 'ev') {
     langExt = new LanguageSupport(StreamLanguage.define(_evidentParser));
+  } else if (ext === 'smt' || ext === 'smt2') {
+    langExt = new LanguageSupport(StreamLanguage.define(_smtParser));
   } else {
     const desc = LanguageDescription.matchFilename(languages, state.currentPath);
     if (desc) langExt = await desc.load();
@@ -981,12 +1323,332 @@ async function saveFile() {
   }
 }
 
+// ── Mode switching (Files / Sessions) ───────────────────
+document.querySelectorAll('.mode-tab').forEach(tab => {
+  tab.addEventListener('click', () => switchMode(tab.dataset.mode));
+});
+
+function switchMode(mode) {
+  if (mode === state.mode) return;
+  state.mode = mode;
+  document.querySelectorAll('.mode-tab').forEach(t => t.classList.toggle('active', t.dataset.mode === mode));
+
+  const filesView = mode === 'files';
+  document.getElementById('file-tree').style.display = filesView ? '' : 'none';
+  document.getElementById('session-list').style.display = filesView ? 'none' : 'block';
+
+  const input = document.getElementById('search-input');
+  input.value = '';
+  input.placeholder = filesView ? 'Search files...' : 'Filter sessions...';
+  document.getElementById('search-results').innerHTML = '';
+
+  if (!filesView) loadSessions();
+}
+
+// ── Sessions list ───────────────────────────────────────
+async function loadSessions() {
+  const container = document.getElementById('session-list');
+  if (state.sessionGroups) { renderSessionList(state.sessionGroups); return; }
+  container.innerHTML = '<div style="padding:12px;color:var(--blockquote-fg);font-size:12px;">Loading sessions…</div>';
+  try {
+    const groups = await fetch('/api/sessions').then(r => r.json());
+    state.sessionGroups = groups;
+    renderSessionList(groups);
+  } catch (e) {
+    container.innerHTML = '<div style="padding:12px;color:var(--blockquote-fg);font-size:12px;">Could not load sessions.</div>';
+    console.error('loadSessions error:', e);
+  }
+}
+
+function renderSessionList(groups, filter) {
+  const container = document.getElementById('session-list');
+  container.innerHTML = '';
+  if (!groups || groups.length === 0) {
+    container.innerHTML = '<div style="padding:12px;color:var(--blockquote-fg);font-size:12px;">No sessions found.</div>';
+    return;
+  }
+  const q = (filter || '').toLowerCase();
+  let shown = 0;
+  for (const g of groups) {
+    const sessions = q
+      ? g.sessions.filter(s => s.title.toLowerCase().includes(q) || g.project.toLowerCase().includes(q))
+      : g.sessions;
+    if (sessions.length === 0) continue;
+
+    const groupEl = document.createElement('div');
+    groupEl.className = 'session-group';
+    const label = document.createElement('div');
+    label.className = 'session-group-label';
+    label.textContent = g.project;
+    label.title = g.project;
+    groupEl.appendChild(label);
+
+    for (const s of sessions) {
+      shown++;
+      const item = document.createElement('div');
+      item.className = 'session-item';
+      item.dataset.id = s.id;
+      if (s.id === state.currentSessionId) item.classList.add('active');
+      const date = new Date(s.modUnix * 1000).toLocaleString();
+      item.innerHTML =
+        '<span class="session-title"></span>' +
+        '<span class="session-meta">' + escHtml(date) + ' · ' + formatBytes(s.size) + '</span>';
+      item.querySelector('.session-title').textContent = s.title;
+      item.title = s.title;
+      item.onclick = () => openSession(s.id, s.title);
+      groupEl.appendChild(item);
+    }
+    container.appendChild(groupEl);
+  }
+  if (shown === 0) {
+    container.innerHTML = '<div style="padding:12px;color:var(--blockquote-fg);font-size:12px;">No matching sessions.</div>';
+  }
+}
+
+function formatBytes(n) {
+  if (n < 1024) return n + ' B';
+  if (n < 1024 * 1024) return (n / 1024).toFixed(0) + ' KB';
+  return (n / 1024 / 1024).toFixed(1) + ' MB';
+}
+
+// ── Open + render a session transcript ───────────────────
+async function openSession(id, title) {
+  if (state.isEditing) await exitEditMode(false);
+  state.currentSessionId = id;
+
+  document.querySelectorAll('.session-item.active').forEach(el => el.classList.remove('active'));
+  const item = document.querySelector(`.session-item[data-id="${CSS.escape(id)}"]`);
+  if (item) item.classList.add('active');
+
+  document.getElementById('current-file-name').textContent = title || id;
+  document.getElementById('edit-btn').style.display = 'none';
+
+  const panel = document.getElementById('render-panel');
+  panel.innerHTML = '<div id="welcome"><p>Loading transcript…</p></div>';
+
+  try {
+    const data = await fetch('/api/session?id=' + encodeURIComponent(id)).then(r => r.json());
+    renderSession(data);
+  } catch (e) {
+    panel.innerHTML = '<div id="welcome"><p>Could not load transcript.</p></div>';
+    console.error('openSession error:', e);
+  }
+}
+
+const PAGE_SIZE = 20;     // turns per page
+const WINDOW_PAGES = 3;   // pages kept mounted at once (prev / current / next)
+
+function renderSession(data) {
+  const panel = document.getElementById('render-panel');
+
+  // Tear down any previous window (scroll/key listeners).
+  if (state.sessionRender && state.sessionRender.destroy) state.sessionRender.destroy();
+  panel.innerHTML = '';
+
+  const nav = document.getElementById('session-nav');
+  if (!data.turns || data.turns.length === 0) {
+    panel.innerHTML = '<div id="welcome"><p>No prose in this session.</p></div>';
+    nav.style.display = 'none';
+    state.sessionRender = null;
+    return;
+  }
+  nav.style.display = '';
+  state.sessionRender = createSessionWindow(panel, data.turns);
+}
+
+// createSessionWindow renders a transcript as a sliding window of WINDOW_PAGES
+// pages. Un-mounted pages are represented by top/bottom spacer elements whose
+// heights come from a FIXED, text-length-based estimate computed once up front.
+// Keeping the estimate fixed (rather than re-deriving it from measured DOM) is
+// what makes the scrollbar stable: measuring a short page can't collapse the
+// total height and send a scrollbar drag cascading to the end. Viewport
+// stability across mounts/unmounts comes from anchoring on a surviving page's
+// on-screen position. The live DOM stays bounded to ~WINDOW_PAGES*PAGE_SIZE turns.
+function createSessionWindow(panel, turns) {
+  const pageCount = Math.ceil(turns.length / PAGE_SIZE);
+  let winStart = 0, winEnd = -1;
+
+  const pageStart = p => p * PAGE_SIZE;
+  const pageEnd   = p => Math.min((p + 1) * PAGE_SIZE, turns.length); // exclusive
+
+  // Fixed per-page height estimate from text length (cheap, computed once).
+  // ~95 chars/line, ~22px/line, plus per-turn chrome; never mutated afterwards.
+  const estPage = new Array(pageCount);
+  for (let p = 0; p < pageCount; p++) {
+    let h = 0;
+    for (let i = pageStart(p); i < pageEnd(p); i++) {
+      const t = turns[i].text || '';
+      const lines = t.split('\n').length + Math.floor(t.length / 95);
+      h += Math.max(1, lines) * 22 + (turns[i].role === 'user' ? 60 : 40);
+    }
+    estPage[p] = h;
+  }
+  const heightOf = p => estPage[p];
+  const topH = () => parseFloat(topSpacer.style.height) || 0;
+
+  const topSpacer = document.createElement('div'); topSpacer.id = 'turn-top-spacer';
+  const botSpacer = document.createElement('div'); botSpacer.id = 'turn-bottom-spacer';
+  panel.appendChild(topSpacer);
+  panel.appendChild(botSpacer);
+
+  function recomputeSpacers() {
+    let top = 0; for (let p = 0; p < winStart; p++) top += heightOf(p);
+    let bot = 0; for (let p = winEnd + 1; p < pageCount; p++) bot += heightOf(p);
+    topSpacer.style.height = top + 'px';
+    botSpacer.style.height = bot + 'px';
+  }
+  function buildPage(p) {
+    const el = document.createElement('div');
+    el.className = 'turn-page';
+    el.dataset.page = p;
+    for (let i = pageStart(p); i < pageEnd(p); i++) el.appendChild(buildTurn(turns[i]));
+    return el;
+  }
+  function pages() { return panel.querySelectorAll('.turn-page'); }
+  // Map a scroll offset to the page occupying that y position (estimate-based).
+  function pageAtY(y) {
+    let acc = 0;
+    for (let p = 0; p < pageCount; p++) { const h = heightOf(p); if (y < acc + h) return p; acc += h; }
+    return pageCount - 1;
+  }
+
+  // Mount a fresh window [start,end] (first render and big jumps).
+  function setWindow(start, end) {
+    start = Math.max(0, start);
+    end = Math.min(pageCount - 1, end);
+    pages().forEach(el => el.remove());
+    const frag = document.createDocumentFragment();
+    for (let p = start; p <= end; p++) frag.appendChild(buildPage(p));
+    panel.insertBefore(frag, botSpacer);
+    winStart = start; winEnd = end;
+    enhance(panel);
+    recomputeSpacers();
+  }
+
+  // Mount one more page at an edge, dropping the far edge to stay within
+  // WINDOW_PAGES. We anchor on a surviving page's screen position and correct
+  // scrollTop by its shift, so the viewport never jumps.
+  function shiftDown() {
+    const anchor = panel.querySelector(`.turn-page[data-page="${winEnd}"]`);
+    const before = anchor.getBoundingClientRect().top;
+    const el = buildPage(winEnd + 1);
+    panel.insertBefore(el, botSpacer);
+    enhance(el); winEnd++;
+    while (winEnd - winStart + 1 > WINDOW_PAGES) { panel.querySelector('.turn-page').remove(); winStart++; }
+    recomputeSpacers();
+    panel.scrollTop += anchor.getBoundingClientRect().top - before;
+  }
+  function shiftUp() {
+    const anchor = panel.querySelector(`.turn-page[data-page="${winStart}"]`);
+    const before = anchor.getBoundingClientRect().top;
+    const el = buildPage(winStart - 1);
+    panel.insertBefore(el, panel.querySelector('.turn-page'));
+    enhance(el); winStart--;
+    while (winEnd - winStart + 1 > WINDOW_PAGES) {
+      const all = panel.querySelectorAll('.turn-page');
+      all[all.length - 1].remove(); winEnd--;
+    }
+    recomputeSpacers();
+    panel.scrollTop += anchor.getBoundingClientRect().top - before;
+  }
+
+  function updatePos() {
+    const p = pageAtY(panel.scrollTop + panel.clientHeight / 2);
+    document.getElementById('sess-pos').textContent =
+      'msgs ' + (pageStart(p) + 1) + '–' + pageEnd(p) + ' of ' + turns.length;
+  }
+
+  function adjust() {
+    const st = panel.scrollTop, vh = panel.clientHeight;
+    const center = pageAtY(st + vh / 2);
+    // Big jump (scrollbar drag into a spacer): re-center, then snap scrollTop to
+    // the top of the new window so it stays consistent with the spacers and
+    // can't trigger a follow-on jump.
+    if (center < winStart - 1 || center > winEnd + 1) {
+      setWindow(center - 1, center + 1);
+      panel.scrollTop = topH();
+      updatePos();
+      return;
+    }
+    // Otherwise prefetch one page past the visible edge as needed.
+    let guard = 0;
+    while (guard++ < WINDOW_PAGES + 1) {
+      if (winEnd < pageCount - 1 && st + vh * 2 >= botSpacer.offsetTop) { shiftDown(); continue; }
+      if (winStart > 0 && st <= topH() + vh) { shiftUp(); continue; }
+      break;
+    }
+  }
+
+  let ticking = false;
+  function onScroll() {
+    if (ticking) return;
+    ticking = true;
+    requestAnimationFrame(() => { ticking = false; adjust(); updatePos(); });
+  }
+  function onKey(e) {
+    if (state.mode !== 'sessions' || state.isEditing) return;
+    const t = e.target;
+    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+    if (e.key === 'Home') { e.preventDefault(); jumpTop(); }
+    else if (e.key === 'End') { e.preventDefault(); jumpEnd(); }
+  }
+
+  function jumpTop() { setWindow(0, WINDOW_PAGES - 1); panel.scrollTop = 0; updatePos(); }
+  function jumpEnd() { setWindow(pageCount - WINDOW_PAGES, pageCount - 1); panel.scrollTop = panel.scrollHeight; updatePos(); }
+
+  const topBtn = document.getElementById('sess-top');
+  const endBtn = document.getElementById('sess-end');
+  topBtn.onclick = jumpTop;
+  endBtn.onclick = jumpEnd;
+  panel.addEventListener('scroll', onScroll);
+  document.addEventListener('keydown', onKey);
+
+  // Initial render.
+  setWindow(0, WINDOW_PAGES - 1);
+  panel.scrollTop = 0;
+  updatePos();
+
+  return {
+    destroy() {
+      panel.removeEventListener('scroll', onScroll);
+      document.removeEventListener('keydown', onKey);
+      topBtn.onclick = null;
+      endBtn.onclick = null;
+    },
+  };
+}
+
+function buildTurn(turn) {
+  const el = document.createElement('div');
+  el.className = 'turn turn-' + turn.role + (turn.sidechain ? ' turn-sidechain' : '');
+  const role = document.createElement('div');
+  role.className = 'turn-role';
+  role.textContent = turn.role === 'user' ? 'You' : 'Claude';
+  const body = document.createElement('div');
+  body.className = 'turn-body';
+  if (turn.role === 'assistant') {
+    body.innerHTML = marked.parse(turn.text);
+  } else {
+    body.textContent = turn.text; // human prompts shown verbatim (pre-wrap)
+  }
+  el.appendChild(role);
+  el.appendChild(body);
+  return el;
+}
+
 // ── Search ───────────────────────────────────────────────
 let searchTimer = null;
 
 document.getElementById('search-input').addEventListener('input', (e) => {
   clearTimeout(searchTimer);
   const q = e.target.value.trim();
+
+  // In Sessions mode the box filters the loaded session list client-side.
+  if (state.mode === 'sessions') {
+    renderSessionList(state.sessionGroups || [], q);
+    return;
+  }
+
   if (q.length < 2) {
     document.getElementById('search-results').innerHTML = '';
     return;
