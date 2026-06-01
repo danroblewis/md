@@ -980,9 +980,14 @@ document.addEventListener('DOMContentLoaded', async () => {
   await loadFileTree();
   connectSSE();
 
-  // Priority: URL ?file= param → server initial file → nothing
-  const urlFile = new URLSearchParams(location.search).get('file');
-  if (urlFile) {
+  // Priority: URL ?session= → URL ?file= → server initial file → nothing
+  const params = new URLSearchParams(location.search);
+  const urlSession = params.get('session');
+  const urlFile = params.get('file');
+  if (urlSession) {
+    switchMode('sessions');
+    openSession(urlSession, null, true);
+  } else if (urlFile) {
     openFile(urlFile);
   } else {
     try {
@@ -994,8 +999,15 @@ document.addEventListener('DOMContentLoaded', async () => {
 
 // Keep URL in sync when navigating via back/forward.
 window.addEventListener('popstate', () => {
-  const file = new URLSearchParams(location.search).get('file');
-  if (file) openFile(file, true);
+  const params = new URLSearchParams(location.search);
+  const session = params.get('session');
+  const file = params.get('file');
+  if (session) {
+    if (state.mode !== 'sessions') switchMode('sessions');
+    openSession(session, null, true);
+  } else if (file) {
+    openFile(file, true);
+  }
 });
 
 // ── File Tree ────────────────────────────────────────────
@@ -1178,6 +1190,11 @@ function connectSSE() {
     let msg;
     try { msg = JSON.parse(e.data); } catch { return; }
     if (msg.type === 'ping') return;
+
+    if (msg.type === 'session-reload') {
+      if (msg.id === state.currentSessionId && !state.isEditing) reloadSession();
+      return;
+    }
 
     if (msg.type === 'reload') {
       // Always refresh file tree
@@ -1412,9 +1429,15 @@ function formatBytes(n) {
 }
 
 // ── Open + render a session transcript ───────────────────
-async function openSession(id, title) {
+async function openSession(id, title, fromPopstate) {
   if (state.isEditing) await exitEditMode(false);
   state.currentSessionId = id;
+
+  // Keep the URL shareable / refresh-able.
+  if (!fromPopstate) {
+    const target = '/?session=' + encodeURIComponent(id);
+    if (location.href !== location.origin + target) history.pushState(null, '', target);
+  }
 
   document.querySelectorAll('.session-item.active').forEach(el => el.classList.remove('active'));
   const item = document.querySelector(`.session-item[data-id="${CSS.escape(id)}"]`);
@@ -1423,11 +1446,16 @@ async function openSession(id, title) {
   document.getElementById('current-file-name').textContent = title || id;
   document.getElementById('edit-btn').style.display = 'none';
 
+  // Ask the server to live-watch this transcript for changes.
+  fetch('/api/watch-session?id=' + encodeURIComponent(id)).catch(() => {});
+
   const panel = document.getElementById('render-panel');
   panel.innerHTML = '<div id="welcome"><p>Loading transcript…</p></div>';
 
   try {
     const data = await fetch('/api/session?id=' + encodeURIComponent(id)).then(r => r.json());
+    // On refresh/back we have no title; fall back to the parsed one.
+    if (!title && data.title) document.getElementById('current-file-name').textContent = data.title;
     renderSession(data);
   } catch (e) {
     panel.innerHTML = '<div id="welcome"><p>Could not load transcript.</p></div>';
@@ -1435,10 +1463,29 @@ async function openSession(id, title) {
   }
 }
 
+// Re-fetch and re-render the open transcript (triggered by a live file change).
+// Keeps the reader pinned to the bottom if they were already there (watching a
+// session grow), otherwise preserves their scroll position.
+async function reloadSession() {
+  const id = state.currentSessionId;
+  if (!id) return;
+  const panel = document.getElementById('render-panel');
+  const sh = panel.scrollHeight, st = panel.scrollTop, ch = panel.clientHeight;
+  const atEnd = sh - st - ch < 120;
+  const frac = sh > ch ? st / (sh - ch) : 0;
+  try {
+    const data = await fetch('/api/session?id=' + encodeURIComponent(id)).then(r => r.json());
+    if (state.currentSessionId !== id) return; // user navigated away mid-fetch
+    renderSession(data, { atEnd, frac });
+  } catch (e) {
+    console.error('reloadSession error:', e);
+  }
+}
+
 const PAGE_SIZE = 20;     // turns per page
 const WINDOW_PAGES = 3;   // pages kept mounted at once (prev / current / next)
 
-function renderSession(data) {
+function renderSession(data, restore) {
   const panel = document.getElementById('render-panel');
 
   // Tear down any previous window (scroll/key listeners).
@@ -1453,7 +1500,14 @@ function renderSession(data) {
     return;
   }
   nav.style.display = '';
-  state.sessionRender = createSessionWindow(panel, data.turns);
+  const win = createSessionWindow(panel, data.turns);
+  state.sessionRender = win;
+
+  // Restore reading position after a live reload.
+  if (restore) {
+    if (restore.atEnd) win.jumpEnd();
+    else if (restore.frac) win.scrollToFrac(restore.frac);
+  }
 }
 
 // createSessionWindow renders a transcript as a sliding window of WINDOW_PAGES
@@ -1608,7 +1662,17 @@ function createSessionWindow(panel, turns) {
   panel.scrollTop = 0;
   updatePos();
 
+  // Position the viewport at a fraction of the whole transcript, then let
+  // adjust() mount the right window for that offset.
+  function scrollToFrac(frac) {
+    panel.scrollTop = Math.round((panel.scrollHeight - panel.clientHeight) * frac);
+    adjust();
+    updatePos();
+  }
+
   return {
+    jumpEnd,
+    scrollToFrac,
     destroy() {
       panel.removeEventListener('scroll', onScroll);
       document.removeEventListener('keydown', onKey);

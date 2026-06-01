@@ -178,8 +178,10 @@ func main() {
 
 	// Claude Code transcript browsing (~/.claude/projects).
 	if projectsDir, err := claudeProjectsDir(); err == nil {
+		sw := newSessionWatcher(broker)
 		mux.HandleFunc("/api/sessions", handleSessions(projectsDir))
 		mux.HandleFunc("/api/session", handleSession(projectsDir))
+		mux.HandleFunc("/api/watch-session", handleWatchSession(projectsDir, sw))
 	} else {
 		log.Printf("session browsing disabled: %v", err)
 	}
@@ -703,6 +705,106 @@ func truncate(s string, n int) string {
 func writeJSON(w http.ResponseWriter, v interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(v)
+}
+
+// sessionWatcher watches the directory of whichever transcript the browser is
+// currently viewing and publishes a "session-reload" event when that file
+// changes (Claude Code appends to it live). Only one file is watched at a time
+// — re-pointing on each open keeps it cheap rather than watching all of
+// ~/.claude/projects, where every active session would spam events.
+type sessionWatcher struct {
+	mu         sync.Mutex
+	watcher    *fsnotify.Watcher
+	broker     *Broker
+	currentDir string
+	current    string // abs path of the watched file
+	id         string // its client-facing id ("<dir>/<file>.jsonl")
+	debounce   *time.Timer
+}
+
+func newSessionWatcher(broker *Broker) *sessionWatcher {
+	w, err := fsnotify.NewWatcher()
+	if err != nil {
+		log.Printf("session watcher disabled: %v", err)
+		return &sessionWatcher{broker: broker}
+	}
+	sw := &sessionWatcher{watcher: w, broker: broker}
+	go sw.loop()
+	return sw
+}
+
+func (sw *sessionWatcher) loop() {
+	for {
+		select {
+		case ev, ok := <-sw.watcher.Events:
+			if !ok {
+				return
+			}
+			if !ev.Has(fsnotify.Write) && !ev.Has(fsnotify.Create) {
+				continue
+			}
+			sw.mu.Lock()
+			if ev.Name == sw.current {
+				id := sw.id
+				if sw.debounce != nil {
+					sw.debounce.Stop()
+				}
+				sw.debounce = time.AfterFunc(150*time.Millisecond, func() {
+					msg, _ := json.Marshal(map[string]string{"type": "session-reload", "id": id})
+					sw.broker.Publish(string(msg))
+				})
+			}
+			sw.mu.Unlock()
+		case _, ok := <-sw.watcher.Errors:
+			if !ok {
+				return
+			}
+		}
+	}
+}
+
+// Watch re-points the watcher at a single transcript file. We watch its parent
+// directory and filter by name so appends, creates and renames are all caught.
+func (sw *sessionWatcher) Watch(abs, id string) {
+	if sw.watcher == nil {
+		return
+	}
+	dir := filepath.Dir(abs)
+	sw.mu.Lock()
+	defer sw.mu.Unlock()
+	if sw.current == abs {
+		return
+	}
+	if sw.currentDir != dir {
+		if sw.currentDir != "" {
+			sw.watcher.Remove(sw.currentDir)
+		}
+		if err := sw.watcher.Add(dir); err != nil {
+			log.Printf("watch session dir: %v", err)
+			sw.currentDir, sw.current, sw.id = "", "", ""
+			return
+		}
+		sw.currentDir = dir
+	}
+	sw.current = abs
+	sw.id = id
+}
+
+func handleWatchSession(projectsDir string, sw *sessionWatcher) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := r.URL.Query().Get("id")
+		if id == "" {
+			http.Error(w, "missing id", 400)
+			return
+		}
+		abs, ok := safeAbs(projectsDir, id)
+		if !ok {
+			http.Error(w, "forbidden", 403)
+			return
+		}
+		sw.Watch(abs, id)
+		w.WriteHeader(http.StatusNoContent)
+	}
 }
 
 func watchDir(root string, broker *Broker) {
