@@ -11,6 +11,7 @@ A lightweight markdown file viewer with live reload.
 - **Edit mode** — click Edit, modify, click outside to save
 - **Search** — full-text search across all files
 - **Dark mode** — follows your OS appearance by default; toggle to override
+- **Print-page ticks** — marks down the right edge of a document estimating where print pages would break
 - **Claude Code session viewer** — browse and read `~/.claude/projects` transcripts as rendered markdown
 
 ## Session viewer

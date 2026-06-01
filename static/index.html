@@ -495,11 +495,35 @@ html, body { height: 100%; background: var(--bg); color: var(--fg); font-family:
   overflow-y: auto;
   padding: 2rem 2.5rem;
   line-height: 1.7;
+  position: relative; /* containing block for print-page ticks */
 }
 
 /* Limit prose width for readability */
 #render-panel > * { max-width: 860px; margin-left: auto; margin-right: auto; }
 #render-panel.full-width > * { max-width: none; }
+
+/* Estimated print-page boundary ticks down the right edge of a document. */
+.page-tick {
+  position: absolute;
+  right: 0;
+  width: 22px;
+  max-width: none !important;   /* override the prose-width rule above */
+  margin: 0 !important;
+  border-top: 1px solid var(--border);
+  pointer-events: none;
+  user-select: none;
+}
+.page-tick::after {
+  content: attr(data-label);
+  position: absolute;
+  right: 2px;
+  top: 3px;
+  font-size: 9px;
+  line-height: 1;
+  color: var(--blockquote-fg);
+  opacity: 0.7;
+  font-variant-numeric: tabular-nums;
+}
 
 /* ── Markdown prose styles ─────────────────────────────── */
 #render-panel h1, #render-panel h2, #render-panel h3,
@@ -1197,7 +1221,40 @@ async function renderFile(path, text) {
 
   // Restore scroll after mermaid (SVG expansion may change scrollHeight)
   panel.scrollTop = scrollFraction * panel.scrollHeight;
+
+  renderPageTicks();
 }
+
+// Estimated height of one printed page: a US-Letter sheet at 96 CSS dpi
+// (11in × 96 = 1056px). A rough, deliberately simple proxy for "where the
+// page would break on paper" — margins and print reflow aren't modelled.
+const PRINT_PAGE_PX = 1056;
+
+// Draw tick marks down the right edge of the rendered document at each
+// estimated print-page boundary. File view only — the transcript view is
+// virtualised, so absolute offsets there are meaningless.
+function renderPageTicks() {
+  const panel = document.getElementById('render-panel');
+  panel.querySelectorAll('.page-tick').forEach(el => el.remove());
+  if (state.mode === 'sessions' || state.isEditing || !state.currentPath) return;
+
+  const total = panel.scrollHeight;
+  for (let y = PRINT_PAGE_PX, page = 1; y < total; y += PRINT_PAGE_PX, page++) {
+    const tick = document.createElement('div');
+    tick.className = 'page-tick';
+    tick.style.top = y + 'px';
+    tick.dataset.label = page + 1;  // the page that begins below this line
+    panel.appendChild(tick);
+  }
+}
+
+// Reflowing the document changes where pages fall, so recompute ticks.
+document.getElementById('width-toggle').addEventListener('click', () => setTimeout(renderPageTicks, 0));
+let _tickResizeTimer = null;
+window.addEventListener('resize', () => {
+  clearTimeout(_tickResizeTimer);
+  _tickResizeTimer = setTimeout(renderPageTicks, 150);
+});
 
 // enhance applies syntax highlighting and renders mermaid diagrams within a
 // container. It skips nodes already processed, so it's safe to call repeatedly
