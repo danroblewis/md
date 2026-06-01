@@ -1013,8 +1013,9 @@ function highlightExt(path) {
 // ── Boot ────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
   if (localStorage.getItem('fullWidth') === '1') document.getElementById('render-panel').classList.add('full-width');
-  const savedTheme = localStorage.getItem('theme') || 'light';
-  applyTheme(savedTheme, false);
+  // Don't persist the boot theme: a stored value means the user manually chose
+  // it, which is how the live OS-change listener tells override from default.
+  applyTheme(preferredTheme(), false, false);
 
   await loadFileTree();
   connectSSE();
@@ -1983,9 +1984,25 @@ document.getElementById('theme-toggle').addEventListener('click', () => {
   applyTheme(current === 'dark' ? 'light' : 'dark', true);
 });
 
-function applyTheme(theme, rerender) {
+// The theme to use when the user hasn't explicitly chosen one: follow the OS.
+// (Each server runs on a fresh random port, so localStorage rarely survives a
+// restart — making the OS preference the effective default every launch.)
+function preferredTheme() {
+  const saved = localStorage.getItem('theme');
+  if (saved === 'dark' || saved === 'light') return saved;
+  return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+}
+
+// Follow live OS appearance changes, unless the user manually picked a theme.
+if (window.matchMedia) {
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => {
+    if (!localStorage.getItem('theme')) applyTheme(e.matches ? 'dark' : 'light', true, false);
+  });
+}
+
+function applyTheme(theme, rerender, persist = true) {
   document.documentElement.dataset.theme = theme;
-  localStorage.setItem('theme', theme);
+  if (persist) localStorage.setItem('theme', theme);
 
   const link = document.getElementById('hljs-theme');
   link.href = theme === 'dark'
@@ -2011,7 +2028,7 @@ function applyTheme(theme, rerender) {
 // Initialize mermaid on first load
 mermaid.initialize({
   startOnLoad: false,
-  theme: (localStorage.getItem('theme') || 'light') === 'dark' ? 'dark' : 'default',
+  theme: preferredTheme() === 'dark' ? 'dark' : 'default',
   securityLevel: 'loose',
 });
 
