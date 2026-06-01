@@ -498,9 +498,14 @@ html, body { height: 100%; background: var(--bg); color: var(--fg); font-family:
   position: relative; /* containing block for print-page ticks */
 }
 
-/* Limit prose width for readability */
+/* Limit prose width for readability. File content is wrapped in .doc so the
+   whole document centers as a block; per-element margins (which set left/right
+   to 0 and would otherwise defeat the auto-margins here) then only affect
+   spacing within that centered column. */
 #render-panel > * { max-width: 860px; margin-left: auto; margin-right: auto; }
-#render-panel.full-width > * { max-width: none; }
+#render-panel .doc { max-width: 860px; margin: 0 auto; }
+#render-panel.full-width > *,
+#render-panel.full-width .doc { max-width: none; }
 
 /* Estimated print-page boundary ticks down the right edge of a document. */
 .page-tick {
@@ -1215,9 +1220,15 @@ async function renderFile(path, text) {
   // Save scroll as fraction of total height
   const scrollFraction = panel.scrollHeight > 0 ? panel.scrollTop / panel.scrollHeight : 0;
 
-  panel.innerHTML = marked.parse(mdSource);
+  // Wrap in a .doc block so the document centers as a whole (per-element
+  // margins would otherwise pin each block to the left).
+  panel.innerHTML = '';
+  const doc = document.createElement('div');
+  doc.className = 'doc';
+  doc.innerHTML = marked.parse(mdSource);
+  panel.appendChild(doc);
 
-  await enhance(panel);
+  await enhance(doc);
 
   // Restore scroll after mermaid (SVG expansion may change scrollHeight)
   panel.scrollTop = scrollFraction * panel.scrollHeight;
