@@ -713,10 +713,21 @@ html, body { height: 100%; background: var(--bg); color: var(--fg); font-family:
   padding: 10px 16px;
   margin-top: 18px;
 }
-.turn-user .turn-body { white-space: pre-wrap; word-wrap: break-word; }
+.turn-user .turn-body { word-wrap: break-word; }
+/* Collapse the top/bottom margins of the first/last markdown block inside a
+   user box so the prose sits snug within its padding. */
+.turn-user .turn-body > *:first-child { margin-top: 0; }
+.turn-user .turn-body > *:last-child { margin-bottom: 0; }
 .turn-assistant { padding: 4px 16px 12px; }
 .turn-sidechain { border-left: 3px solid var(--active-fg); }
 .turn-sidechain .turn-role::after { content: ' · subagent'; font-weight: 400; text-transform: none; }
+
+/* Compaction summaries are injected as "user" turns but aren't typed by a
+   person — give them their own accent and label. */
+.turn-compact { border-left: 3px solid #d97706; }
+.turn-compact .turn-role { color: #d97706; }
+[data-theme="dark"] .turn-compact { border-left-color: #fbbf24; }
+[data-theme="dark"] .turn-compact .turn-role { color: #fbbf24; }
 /* Keep prose width rules from applying twice inside turns */
 #render-panel .turn > * { max-width: none; margin-left: 0; margin-right: 0; }
 /* Windowed transcript spacers stand in for un-mounted pages so the scrollbar
@@ -1684,17 +1695,20 @@ function createSessionWindow(panel, turns) {
 
 function buildTurn(turn) {
   const el = document.createElement('div');
-  el.className = 'turn turn-' + turn.role + (turn.sidechain ? ' turn-sidechain' : '');
+  el.className = 'turn turn-' + turn.role +
+    (turn.sidechain ? ' turn-sidechain' : '') +
+    (turn.compact ? ' turn-compact' : '');
   const role = document.createElement('div');
   role.className = 'turn-role';
-  role.textContent = turn.role === 'user' ? 'You' : 'Claude';
+  role.textContent = turn.compact ? 'Compaction summary' : (turn.role === 'user' ? 'You' : 'Claude');
   const body = document.createElement('div');
   body.className = 'turn-body';
-  if (turn.role === 'assistant') {
-    body.innerHTML = marked.parse(turn.text);
-  } else {
-    body.textContent = turn.text; // human prompts shown verbatim (pre-wrap)
-  }
+  // Both roles render as markdown; the box around user turns provides the
+  // visual separation. `breaks: true` keeps the line breaks people type into
+  // prompts, while still formatting markdown (e.g. injected compaction summaries).
+  body.innerHTML = turn.role === 'assistant'
+    ? marked.parse(turn.text)
+    : marked.parse(turn.text, { breaks: true });
   el.appendChild(role);
   el.appendChild(body);
   return el;

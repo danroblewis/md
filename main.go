@@ -64,6 +64,7 @@ type Turn struct {
 	Text      string `json:"text"`
 	Timestamp string `json:"timestamp,omitempty"`
 	Sidechain bool   `json:"sidechain,omitempty"` // from a subagent
+	Compact   bool   `json:"compact,omitempty"`   // an injected compaction summary
 }
 
 // SessionData is the parsed, prose-only transcript returned to the client.
@@ -78,12 +79,13 @@ type SessionData struct {
 // don't care about (file-history-snapshot, permission-mode, ...) have no
 // "message" field, so Message stays empty and decoding is cheap.
 type rawRecord struct {
-	Type        string          `json:"type"`
-	IsMeta      bool            `json:"isMeta"`
-	IsSidechain bool            `json:"isSidechain"`
-	Timestamp   string          `json:"timestamp"`
-	Cwd         string          `json:"cwd"`
-	Message     json.RawMessage `json:"message"`
+	Type             string          `json:"type"`
+	IsMeta           bool            `json:"isMeta"`
+	IsSidechain      bool            `json:"isSidechain"`
+	IsCompactSummary bool            `json:"isCompactSummary"`
+	Timestamp        string          `json:"timestamp"`
+	Cwd              string          `json:"cwd"`
+	Message          json.RawMessage `json:"message"`
 }
 
 type rawMessage struct {
@@ -639,7 +641,7 @@ func turnFromLine(line []byte) (Turn, bool) {
 		if text == "" || isNoisePrompt(text) {
 			return Turn{}, false
 		}
-		return Turn{Role: "user", Text: text, Timestamp: rec.Timestamp, Sidechain: rec.IsSidechain}, true
+		return Turn{Role: "user", Text: text, Timestamp: rec.Timestamp, Sidechain: rec.IsSidechain, Compact: rec.IsCompactSummary}, true
 	case "assistant":
 		var blocks []contentBlock
 		if json.Unmarshal(msg.Content, &blocks) != nil {
