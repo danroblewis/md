@@ -15,6 +15,7 @@ go build -o md .     # build the binary (REQUIRED after editing static/ — see 
 ./md                 # serve the current directory
 ./md path/to/dir     # serve a directory
 ./md file.md         # serve a file's directory and open that file
+./md -depth 5 dir    # scan/watch deeper than the default 3 levels
 go vet ./...         # vet
 gofmt -w main.go     # format
 ```
@@ -45,10 +46,17 @@ Two largely independent feature areas share one server (`main.go`) and one page
 
 ### 1. Markdown file browsing
 Rooted at the CLI-provided directory. `safeAbs(root, rel)` sandboxes every path
-to that root. Endpoints: `/api/files` (recursive tree), `/api/file` (GET reads,
-POST writes — this is how Edit mode saves), `/api/search` (full-text, capped),
+to that root. Endpoints: `/api/files` (tree), `/api/file` (GET reads, POST
+writes — this is how Edit mode saves), `/api/search` (full-text, capped),
 `/api/config` (initial file). `watchDir` uses fsnotify to watch the tree and
 publishes debounced `reload` events over `/events` (SSE, fanned out by `Broker`).
+
+Both the tree and the watcher are bounded: they skip dotfiles and `ignoredDirs`
+(node_modules, vendor, target, …) and stop at `-depth` levels (default 3).
+fsnotify holds one descriptor per watched directory on macOS, so without these
+limits a large repo exhausts the default 256-FD soft limit and breaks HTTP
+`accept()`. `raiseFDLimit()` also bumps the soft limit at startup, and the watch
+count is capped at `softLimit - 256`.
 
 ### 2. Claude Code session viewing
 Rooted at `~/.claude/projects` (`claudeProjectsDir`). Endpoints:

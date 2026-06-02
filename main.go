@@ -19,6 +19,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
@@ -132,9 +133,23 @@ func (b *Broker) Publish(msg string) {
 
 func main() {
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: mdserver [path]\n\n  path  directory or file to open (default: current directory)\n")
+		fmt.Fprintf(os.Stderr, "Usage: mdserver [path]\n\n  path   directory or file to open (default: current directory)\n  -depth N  max directory depth to scan and watch (default 3)\n")
 	}
+	depthFlag := flag.Int("depth", 3, "max directory depth to scan and watch")
 	flag.Parse()
+	maxDepth := *depthFlag
+
+	// fsnotify holds one file descriptor per watched directory on macOS, so a
+	// deep tree can exhaust the default soft limit (256) and break HTTP
+	// accept(). Raise the limit and cap the number of watches accordingly.
+	fdLimit := raiseFDLimit()
+	maxWatches := int(fdLimit) - 256 // reserve descriptors for HTTP, embed FS, etc.
+	if maxWatches < 64 {
+		maxWatches = 64
+	}
+	if maxWatches > 8192 {
+		maxWatches = 8192
+	}
 
 	// Resolve root dir and optional initial file from positional arg.
 	var absDir, initialFile string
@@ -159,7 +174,7 @@ func main() {
 	}
 
 	broker := &Broker{clients: make(map[chan string]struct{})}
-	go watchDir(absDir, broker)
+	go watchDir(absDir, broker, maxDepth, maxWatches)
 
 	mux := http.NewServeMux()
 
@@ -173,7 +188,7 @@ func main() {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Write(data)
 	})
-	mux.HandleFunc("/api/files", handleFiles(absDir))
+	mux.HandleFunc("/api/files", handleFiles(absDir, maxDepth))
 	mux.HandleFunc("/api/file", handleFile(absDir))
 	mux.HandleFunc("/api/search", handleSearch(absDir))
 	mux.HandleFunc("/api/config", handleConfig(initialFile))
@@ -247,9 +262,9 @@ func safeAbs(root, relPath string) (string, bool) {
 	return abs, true
 }
 
-func handleFiles(root string) http.HandlerFunc {
+func handleFiles(root string, maxDepth int) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		nodes, err := buildTree(root, root)
+		nodes, err := buildTree(root, root, 0, maxDepth)
 		if err != nil {
 			http.Error(w, err.Error(), 500)
 			return
@@ -259,14 +274,31 @@ func handleFiles(root string) http.HandlerFunc {
 	}
 }
 
-func buildTree(root, current string) ([]*FileNode, error) {
+// ignoredDirs are heavy/generated directories we never scan or watch. Combined
+// with the depth limit and the dotfile skip, this keeps the tree small and the
+// watch count well under the descriptor limit.
+var ignoredDirs = map[string]bool{
+	"node_modules": true, "vendor": true, "target": true, "dist": true,
+	"build": true, "out": true, "__pycache__": true, "coverage": true,
+	".git": true,
+}
+
+// skipDir reports whether a directory should be excluded from scanning/watching.
+func skipDir(name string) bool {
+	return strings.HasPrefix(name, ".") || ignoredDirs[name]
+}
+
+func buildTree(root, current string, depth, maxDepth int) ([]*FileNode, error) {
 	entries, err := os.ReadDir(current)
 	if err != nil {
 		return nil, err
 	}
 	var nodes []*FileNode
 	for _, e := range entries {
-		if strings.HasPrefix(e.Name(), ".") {
+		if e.IsDir() && skipDir(e.Name()) {
+			continue
+		}
+		if !e.IsDir() && strings.HasPrefix(e.Name(), ".") {
 			continue
 		}
 		relPath, _ := filepath.Rel(root, filepath.Join(current, e.Name()))
@@ -275,8 +307,10 @@ func buildTree(root, current string) ([]*FileNode, error) {
 			Path:  filepath.ToSlash(relPath),
 			IsDir: e.IsDir(),
 		}
-		if e.IsDir() {
-			node.Children, _ = buildTree(root, filepath.Join(current, e.Name()))
+		// Recurse only while under the depth limit; deeper dirs show but aren't
+		// expanded.
+		if e.IsDir() && depth+1 < maxDepth {
+			node.Children, _ = buildTree(root, filepath.Join(current, e.Name()), depth+1, maxDepth)
 		}
 		nodes = append(nodes, node)
 	}
@@ -836,7 +870,29 @@ func handleWatchSession(projectsDir string, sw *sessionWatcher) http.HandlerFunc
 	}
 }
 
-func watchDir(root string, broker *Broker) {
+// raiseFDLimit bumps the open-file soft limit toward the hard limit and returns
+// the resulting soft limit. macOS defaults to 256, which a directory watcher can
+// exhaust; raising it keeps descriptors available for HTTP connections.
+func raiseFDLimit() uint64 {
+	var rl syscall.Rlimit
+	if err := syscall.Getrlimit(syscall.RLIMIT_NOFILE, &rl); err != nil {
+		return 256
+	}
+	target := rl.Max
+	if target > 10240 { // macOS won't honour "infinity"; OPEN_MAX is ~10240
+		target = 10240
+	}
+	if rl.Cur < target {
+		rl.Cur = target
+		_ = syscall.Setrlimit(syscall.RLIMIT_NOFILE, &rl)
+	}
+	if syscall.Getrlimit(syscall.RLIMIT_NOFILE, &rl) == nil {
+		return rl.Cur
+	}
+	return 256
+}
+
+func watchDir(root string, broker *Broker, maxDepth, maxWatches int) {
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		log.Printf("watcher error: %v", err)
@@ -844,15 +900,35 @@ func watchDir(root string, broker *Broker) {
 	}
 	defer watcher.Close()
 
+	watches := 0
+	capped := false
 	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
+		if err != nil || !d.IsDir() {
 			return nil
 		}
-		if d.IsDir() && !strings.HasPrefix(d.Name(), ".") {
-			watcher.Add(path)
+		if path != root && skipDir(d.Name()) {
+			return fs.SkipDir
+		}
+		rel, _ := filepath.Rel(root, path)
+		depth := 0
+		if rel != "." {
+			depth = strings.Count(rel, string(os.PathSeparator)) + 1
+		}
+		if depth > maxDepth {
+			return fs.SkipDir
+		}
+		if watches >= maxWatches {
+			capped = true
+			return fs.SkipAll
+		}
+		if watcher.Add(path) == nil {
+			watches++
 		}
 		return nil
 	})
+	if capped {
+		log.Printf("watch limit reached (%d dirs); live-reload may miss changes in deeper/later directories", maxWatches)
+	}
 
 	type debounceEntry struct {
 		timer *time.Timer
