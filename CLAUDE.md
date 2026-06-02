@@ -61,7 +61,10 @@ Rooted at `~/.claude/projects` (`claudeProjectsDir`). Endpoints:
   `"role"` to skip huge non-message records cheaply, and keeps only user *string*
   prompts and assistant `text` blocks (tool calls/results, thinking, snapshots
   are dropped). A 146 MB session collapses to a few MB. Results are cached by
-  `path + mtime + size` (transcripts are append-only).
+  `path + mtime + size` (transcripts are append-only). The session title comes
+  from `ai-title` records (`aiTitle` — Claude's generated name; the listing uses
+  the first one in the head budget, the full parse uses the last/freshest),
+  falling back to the first user prompt.
 - `/api/watch-session?id=...` — points a single-file `sessionWatcher` at the
   open transcript and publishes `session-reload` events. Only one file is
   watched at a time (watching all of `~/.claude/projects` would spam events from

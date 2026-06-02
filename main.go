@@ -85,6 +85,7 @@ type rawRecord struct {
 	IsCompactSummary bool            `json:"isCompactSummary"`
 	Timestamp        string          `json:"timestamp"`
 	Cwd              string          `json:"cwd"`
+	AiTitle          string          `json:"aiTitle"` // Claude-generated session name
 	Message          json.RawMessage `json:"message"`
 }
 
@@ -500,6 +501,7 @@ func scanSessionMeta(abs, encodedDir string) (project, title string) {
 	defer f.Close()
 
 	reader := bufio.NewReader(io.LimitReader(f, metaScanBudget))
+	var aiTitle, prompt string
 	for {
 		line, err := reader.ReadBytes('\n')
 		if len(line) > 0 {
@@ -508,21 +510,30 @@ func scanSessionMeta(abs, encodedDir string) (project, title string) {
 				if project == "" && rec.Cwd != "" {
 					project = rec.Cwd
 				}
-				if title == "" && rec.Type == "user" && !rec.IsMeta {
+				if aiTitle == "" && rec.Type == "ai-title" && rec.AiTitle != "" {
+					aiTitle = rec.AiTitle
+				}
+				if prompt == "" && rec.Type == "user" && !rec.IsMeta {
 					if t := userPromptText(rec.Message); t != "" {
-						title = truncate(t, titleMaxLen)
+						prompt = t
 					}
 				}
 			}
 		}
-		if (project != "" && title != "") || err != nil {
+		// The Claude-generated title is best; stop once we have it (plus cwd).
+		if (project != "" && aiTitle != "") || err != nil {
 			break
 		}
 	}
 	if project == "" {
 		project = decodeProjectDir(encodedDir)
 	}
-	if title == "" {
+	switch {
+	case aiTitle != "":
+		title = truncate(aiTitle, titleMaxLen)
+	case prompt != "":
+		title = truncate(prompt, titleMaxLen)
+	default:
 		title = "(no prompt)"
 	}
 	return project, title
@@ -596,14 +607,17 @@ func parseSession(abs, id string) (*SessionData, error) {
 	defer f.Close()
 
 	data := &SessionData{ID: id}
+	var firstPrompt, lastAiTitle string
 	reader := bufio.NewReader(f)
 	for {
 		line, readErr := reader.ReadBytes('\n')
 		if len(line) > 0 {
-			// Cheap pre-filter: only message lines carry a "role" — this skips
-			// huge snapshot/permission records without a full parse, and is
-			// independent of JSON whitespace.
-			if bytes.Contains(line, []byte(`"role"`)) {
+			// Cheap pre-filter: message lines carry "role"; the session name is
+			// in "aiTitle" records. Everything else (huge snapshots, permission
+			// records) is skipped without a full parse. Whitespace-independent.
+			hasRole := bytes.Contains(line, []byte(`"role"`))
+			hasTitle := bytes.Contains(line, []byte(`"aiTitle"`))
+			if hasRole {
 				if turn, ok := turnFromLine(line); ok {
 					if data.Project == "" {
 						// cwd lives on these records; capture it once.
@@ -612,16 +626,27 @@ func parseSession(abs, id string) (*SessionData, error) {
 							data.Project = rec.Cwd
 						}
 					}
-					if data.Title == "" && turn.Role == "user" {
-						data.Title = truncate(turn.Text, titleMaxLen)
+					if firstPrompt == "" && turn.Role == "user" {
+						firstPrompt = turn.Text
 					}
 					data.Turns = append(data.Turns, turn)
+				}
+			} else if hasTitle {
+				var rec rawRecord
+				if json.Unmarshal(line, &rec) == nil && rec.Type == "ai-title" && rec.AiTitle != "" {
+					lastAiTitle = rec.AiTitle // keep the most recent
 				}
 			}
 		}
 		if readErr != nil {
 			break
 		}
+	}
+	// Prefer the Claude-generated session name; fall back to the first prompt.
+	if lastAiTitle != "" {
+		data.Title = truncate(lastAiTitle, titleMaxLen)
+	} else if firstPrompt != "" {
+		data.Title = truncate(firstPrompt, titleMaxLen)
 	}
 	return data, nil
 }
