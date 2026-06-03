@@ -22,7 +22,8 @@ and sorted newest-first. Click one to read it as a clean, chat-style transcript.
 
 - **Focused rendering** — prompts and replies render as markdown; each tool
   call collapses to a single line (name + input on the left, result on the
-  right), and thinking/bookkeeping is filtered out server-side.
+  right) that you can click to expand, and thinking/bookkeeping is filtered out
+  server-side.
 - **Windowed transcripts** — long sessions render as a sliding window of pages,
   so the live DOM stays small no matter how many thousands of messages there are.
   Use **Start**/**End** (or Home/End keys) to jump; a live readout shows your

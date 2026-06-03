@@ -761,7 +761,8 @@ html, body { height: 100%; background: var(--bg); color: var(--fg); font-family:
 .turn-user .turn-body > *:last-child { margin-bottom: 0; }
 .turn-assistant { padding: 4px 16px 12px; }
 
-/* Compact one-line tool call: name+input left, result right, both ellipsized. */
+/* Compact one-line tool call: name+input left, result right, both ellipsized.
+   Click to expand into a stacked, full (wrapped) view. */
 .turn-tool {
   display: flex;
   gap: 14px;
@@ -773,12 +774,29 @@ html, body { height: 100%; background: var(--bg); color: var(--fg); font-family:
   font-size: 11.5px;
   line-height: 1.6;
   color: var(--blockquote-fg);
+  cursor: pointer;
 }
+.turn-tool:hover { background: var(--hover-bg); }
 #render-panel.full-width .turn-tool { max-width: none; }
 .turn-tool .tool-call { flex: 1 1 58%; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .turn-tool .tool-result { flex: 1 1 42%; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: right; opacity: 0.7; }
 .turn-tool .tool-name { color: var(--link); font-weight: 600; }
+.turn-tool .tool-name::before { content: '▸'; display: inline-block; width: 1em; color: var(--blockquote-fg); }
 .turn-tool .tool-query { color: var(--fg); opacity: 0.8; }
+
+/* Expanded: stack call over result, wrap everything, show full text. */
+.turn-tool.expanded { flex-direction: column; align-items: stretch; gap: 4px; }
+.turn-tool.expanded .tool-name::before { content: '▾'; }
+.turn-tool.expanded .tool-call,
+.turn-tool.expanded .tool-result {
+  flex: none;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  overflow: visible;
+  text-overflow: clip;
+  text-align: left;
+}
+.turn-tool.expanded .tool-result { opacity: 0.85; padding-left: 1em; border-left: 2px solid var(--border); }
 
 .turn-sidechain { border-left: 3px solid var(--active-fg); }
 .turn-sidechain .turn-role::after { content: ' · subagent'; font-weight: 400; text-transform: none; }
@@ -2017,7 +2035,7 @@ function buildTurn(turn, index, query) {
     call.className = 'tool-call';
     const nm = document.createElement('span');
     nm.className = 'tool-name';
-    nm.textContent = '▸ ' + (turn.name || 'tool');
+    nm.textContent = turn.name || 'tool';
     call.appendChild(nm);
     if (turn.query) {
       const q = document.createElement('span');
@@ -2025,14 +2043,13 @@ function buildTurn(turn, index, query) {
       q.textContent = ' ' + turn.query;
       call.appendChild(q);
     }
-    call.title = (turn.name || '') + (turn.query ? ' ' + turn.query : '');
     const res = document.createElement('span');
     res.className = 'tool-result';
     res.textContent = turn.result || '';
-    res.title = turn.result || '';
     if (query) { highlightMatches(call, query); highlightMatches(res, query); }
     el.appendChild(call);
     el.appendChild(res);
+    el.addEventListener('click', () => el.classList.toggle('expanded'));
     return el;
   }
 

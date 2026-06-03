@@ -798,7 +798,7 @@ func toolQuery(input json.RawMessage, cwds ...string) string {
 	for _, k := range []string{"command", "file_path", "path", "pattern", "url", "query", "prompt", "description", "notebook_path"} {
 		if v, ok := m[k]; ok {
 			if s, ok := v.(string); ok && s != "" {
-				return truncate(stripCwd(s, cwds...), 200)
+				return clip(stripCwd(s, cwds...), 800)
 			}
 		}
 	}
@@ -813,7 +813,7 @@ func summarizeResult(content json.RawMessage, cwds ...string) string {
 	}
 	var s string
 	if json.Unmarshal(content, &s) == nil {
-		return truncate(stripCwd(s, cwds...), 200)
+		return clip(stripCwd(s, cwds...), 2000)
 	}
 	var blocks []contentBlock
 	if json.Unmarshal(content, &blocks) == nil {
@@ -821,10 +821,10 @@ func summarizeResult(content json.RawMessage, cwds ...string) string {
 		for _, b := range blocks {
 			if b.Type == "text" && b.Text != "" {
 				sb.WriteString(b.Text)
-				sb.WriteString(" ")
+				sb.WriteString("\n")
 			}
 		}
-		return truncate(stripCwd(sb.String(), cwds...), 200)
+		return clip(stripCwd(sb.String(), cwds...), 2000)
 	}
 	return ""
 }
@@ -867,6 +867,18 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return strings.TrimSpace(s[:n]) + "…"
+}
+
+// clip caps a string to n runes, preserving newlines (the collapsed one-line UI
+// flattens them with CSS; the expanded view shows them). Used for tool call
+// input/result, which the UI can expand to read more of.
+func clip(s string, n int) string {
+	s = strings.TrimSpace(s)
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return strings.TrimSpace(string(r[:n])) + "…"
 }
 
 func writeJSON(w http.ResponseWriter, v interface{}) {
