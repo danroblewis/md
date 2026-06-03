@@ -69,8 +69,9 @@ Rooted at `~/.claude/projects` (`claudeProjectsDir`). Endpoints:
   `"role"` to skip huge non-message records cheaply, and emits: user *string*
   prompts, assistant `text` blocks, and one compact `tool` turn per `tool_use`
   (its `tool_result` is paired back in by `tool_use_id` and summarized into a
-  one-line `result`). Thinking and snapshots are dropped. A 146 MB session
-  collapses to a few MB. Results are cached by
+  one-line `result`). Working-directory prefixes (the record's `cwd` and the
+  session root) are stripped from tool input/result so paths show relative.
+  Thinking and snapshots are dropped. A 146 MB session collapses to a few MB. Results are cached by
   `path + mtime + size` (transcripts are append-only). The session title comes
   from `ai-title` records (`aiTitle` — Claude's generated name; the listing uses
   the first one in the head budget, the full parse uses the last/freshest),

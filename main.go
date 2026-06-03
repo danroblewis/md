@@ -722,7 +722,7 @@ func processRecord(line []byte, data *SessionData, pending map[string]int, first
 		for _, b := range blocks {
 			if b.Type == "tool_result" && b.ToolUseID != "" {
 				if idx, ok := pending[b.ToolUseID]; ok {
-					data.Turns[idx].Result = summarizeResult(b.Content)
+					data.Turns[idx].Result = summarizeResult(b.Content, rec.Cwd, data.Project)
 				}
 			}
 		}
@@ -751,7 +751,7 @@ func processRecord(line []byte, data *SessionData, pending map[string]int, first
 		for _, b := range blocks {
 			if b.Type == "tool_use" {
 				data.Turns = append(data.Turns, Turn{
-					Role: "tool", Name: b.Name, Query: toolQuery(b.Input),
+					Role: "tool", Name: b.Name, Query: toolQuery(b.Input, rec.Cwd, data.Project),
 					Timestamp: rec.Timestamp, Sidechain: rec.IsSidechain,
 				})
 				if b.ID != "" {
@@ -762,9 +762,32 @@ func processRecord(line []byte, data *SessionData, pending map[string]int, first
 	}
 }
 
+// stripCwd removes working-directory prefixes from a string so paths show
+// relative (e.g. "/home/u/proj/src/x.go" -> "src/x.go"), leaving more of the
+// meaningful text visible in the one-line tool view. Multiple roots may be
+// given (the record's cwd and the session root); longer ones are removed first
+// so a nested directory is stripped before its parent.
+func stripCwd(s string, cwds ...string) string {
+	if s == "" {
+		return s
+	}
+	roots := make([]string, 0, len(cwds))
+	for _, c := range cwds {
+		if c != "" {
+			roots = append(roots, c)
+		}
+	}
+	sort.Slice(roots, func(i, j int) bool { return len(roots[i]) > len(roots[j]) })
+	for _, c := range roots {
+		s = strings.ReplaceAll(s, c+"/", "")
+		s = strings.ReplaceAll(s, c, ".")
+	}
+	return s
+}
+
 // toolQuery picks a single representative string field from a tool's input to
 // show alongside its name (e.g. the command, file path, or pattern).
-func toolQuery(input json.RawMessage) string {
+func toolQuery(input json.RawMessage, cwds ...string) string {
 	if len(input) == 0 {
 		return ""
 	}
@@ -775,7 +798,7 @@ func toolQuery(input json.RawMessage) string {
 	for _, k := range []string{"command", "file_path", "path", "pattern", "url", "query", "prompt", "description", "notebook_path"} {
 		if v, ok := m[k]; ok {
 			if s, ok := v.(string); ok && s != "" {
-				return truncate(s, 200)
+				return truncate(stripCwd(s, cwds...), 200)
 			}
 		}
 	}
@@ -784,13 +807,13 @@ func toolQuery(input json.RawMessage) string {
 
 // summarizeResult renders a tool_result's content (a string or a block array)
 // down to a short single line.
-func summarizeResult(content json.RawMessage) string {
+func summarizeResult(content json.RawMessage, cwds ...string) string {
 	if len(content) == 0 {
 		return ""
 	}
 	var s string
 	if json.Unmarshal(content, &s) == nil {
-		return truncate(s, 200)
+		return truncate(stripCwd(s, cwds...), 200)
 	}
 	var blocks []contentBlock
 	if json.Unmarshal(content, &blocks) == nil {
@@ -801,7 +824,7 @@ func summarizeResult(content json.RawMessage) string {
 				sb.WriteString(" ")
 			}
 		}
-		return truncate(sb.String(), 200)
+		return truncate(stripCwd(sb.String(), cwds...), 200)
 	}
 	return ""
 }
