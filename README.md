@@ -20,9 +20,9 @@ Switch the sidebar to the **Sessions** tab to browse your Claude Code
 transcripts (the `.jsonl` files under `~/.claude/projects`), grouped by project
 and sorted newest-first. Click one to read it as a clean, chat-style transcript.
 
-- **Prose-only rendering** — only your prompts and Claude's replies are shown,
-  rendered as markdown; tool calls, results, and bookkeeping are filtered out
-  server-side (a 146 MB session becomes ~3 MB of text).
+- **Focused rendering** — prompts and replies render as markdown; each tool
+  call collapses to a single line (name + input on the left, result on the
+  right), and thinking/bookkeeping is filtered out server-side.
 - **Windowed transcripts** — long sessions render as a sliding window of pages,
   so the live DOM stays small no matter how many thousands of messages there are.
   Use **Start**/**End** (or Home/End keys) to jump; a live readout shows your

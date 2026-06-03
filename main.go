@@ -59,13 +59,17 @@ type SessionGroup struct {
 	Sessions []SessionInfo `json:"sessions"`
 }
 
-// Turn is one piece of prose in a transcript: a human prompt or assistant text.
+// Turn is one entry in a transcript: a human prompt, assistant text, or a
+// compact tool call (role "tool").
 type Turn struct {
-	Role      string `json:"role"` // "user" | "assistant"
-	Text      string `json:"text"`
+	Role      string `json:"role"` // "user" | "assistant" | "tool"
+	Text      string `json:"text,omitempty"`
 	Timestamp string `json:"timestamp,omitempty"`
 	Sidechain bool   `json:"sidechain,omitempty"` // from a subagent
 	Compact   bool   `json:"compact,omitempty"`   // an injected compaction summary
+	Name      string `json:"name,omitempty"`      // tool: tool name
+	Query     string `json:"query,omitempty"`     // tool: input summary
+	Result    string `json:"result,omitempty"`    // tool: output summary
 }
 
 // SessionData is the parsed, prose-only transcript returned to the client.
@@ -96,8 +100,13 @@ type rawMessage struct {
 }
 
 type contentBlock struct {
-	Type string `json:"type"`
-	Text string `json:"text"`
+	Type      string          `json:"type"`
+	Text      string          `json:"text"`
+	Name      string          `json:"name"`        // tool_use
+	Input     json.RawMessage `json:"input"`        // tool_use
+	ID        string          `json:"id"`          // tool_use
+	ToolUseID string          `json:"tool_use_id"` // tool_result
+	Content   json.RawMessage `json:"content"`      // tool_result (string or block array)
 }
 
 // Broker manages SSE clients.
@@ -631,8 +640,9 @@ func handleSession(projectsDir string) http.HandlerFunc {
 	}
 }
 
-// parseSession streams a transcript and extracts human prompts + assistant
-// text, discarding tool calls, tool results, thinking and bookkeeping records.
+// parseSession streams a transcript and extracts human prompts, assistant text,
+// and compact tool calls (paired tool_use → tool_result). Thinking and
+// bookkeeping records are discarded.
 func parseSession(abs, id string) (*SessionData, error) {
 	f, err := os.Open(abs)
 	if err != nil {
@@ -641,6 +651,7 @@ func parseSession(abs, id string) (*SessionData, error) {
 	defer f.Close()
 
 	data := &SessionData{ID: id}
+	pending := map[string]int{} // tool_use id -> index of its Turn in data.Turns
 	var firstPrompt, lastAiTitle string
 	reader := bufio.NewReader(f)
 	for {
@@ -649,23 +660,9 @@ func parseSession(abs, id string) (*SessionData, error) {
 			// Cheap pre-filter: message lines carry "role"; the session name is
 			// in "aiTitle" records. Everything else (huge snapshots, permission
 			// records) is skipped without a full parse. Whitespace-independent.
-			hasRole := bytes.Contains(line, []byte(`"role"`))
-			hasTitle := bytes.Contains(line, []byte(`"aiTitle"`))
-			if hasRole {
-				if turn, ok := turnFromLine(line); ok {
-					if data.Project == "" {
-						// cwd lives on these records; capture it once.
-						var rec rawRecord
-						if json.Unmarshal(line, &rec) == nil {
-							data.Project = rec.Cwd
-						}
-					}
-					if firstPrompt == "" && turn.Role == "user" {
-						firstPrompt = turn.Text
-					}
-					data.Turns = append(data.Turns, turn)
-				}
-			} else if hasTitle {
+			if bytes.Contains(line, []byte(`"role"`)) {
+				processRecord(line, data, pending, &firstPrompt)
+			} else if bytes.Contains(line, []byte(`"aiTitle"`)) {
 				var rec rawRecord
 				if json.Unmarshal(line, &rec) == nil && rec.Type == "ai-title" && rec.AiTitle != "" {
 					lastAiTitle = rec.AiTitle // keep the most recent
@@ -685,29 +682,57 @@ func parseSession(abs, id string) (*SessionData, error) {
 	return data, nil
 }
 
-// turnFromLine extracts a single prose Turn from a transcript line, or false.
-func turnFromLine(line []byte) (Turn, bool) {
+// processRecord appends the turns from one user/assistant record to data, and
+// fills in tool results against the tool calls recorded in pending.
+func processRecord(line []byte, data *SessionData, pending map[string]int, firstPrompt *string) {
 	var rec rawRecord
 	if json.Unmarshal(line, &rec) != nil || rec.IsMeta || len(rec.Message) == 0 {
-		return Turn{}, false
+		return
+	}
+	if data.Project == "" && rec.Cwd != "" {
+		data.Project = rec.Cwd
 	}
 	var msg rawMessage
 	if json.Unmarshal(rec.Message, &msg) != nil {
-		return Turn{}, false
+		return
 	}
 
 	switch rec.Type {
 	case "user":
-		text := userPromptText(rec.Message)
-		if text == "" || isNoisePrompt(text) {
-			return Turn{}, false
+		// A plain string is a human prompt; an array carries tool results.
+		var s string
+		if json.Unmarshal(msg.Content, &s) == nil {
+			text := strings.TrimSpace(s)
+			if text == "" || isNoisePrompt(text) {
+				return
+			}
+			if *firstPrompt == "" {
+				*firstPrompt = text
+			}
+			data.Turns = append(data.Turns, Turn{
+				Role: "user", Text: text, Timestamp: rec.Timestamp,
+				Sidechain: rec.IsSidechain, Compact: rec.IsCompactSummary,
+			})
+			return
 		}
-		return Turn{Role: "user", Text: text, Timestamp: rec.Timestamp, Sidechain: rec.IsSidechain, Compact: rec.IsCompactSummary}, true
+		var blocks []contentBlock
+		if json.Unmarshal(msg.Content, &blocks) != nil {
+			return
+		}
+		for _, b := range blocks {
+			if b.Type == "tool_result" && b.ToolUseID != "" {
+				if idx, ok := pending[b.ToolUseID]; ok {
+					data.Turns[idx].Result = summarizeResult(b.Content)
+				}
+			}
+		}
+
 	case "assistant":
 		var blocks []contentBlock
 		if json.Unmarshal(msg.Content, &blocks) != nil {
-			return Turn{}, false
+			return
 		}
+		// Assistant prose first (merged), then one compact turn per tool call.
 		var sb strings.Builder
 		for _, b := range blocks {
 			if b.Type == "text" && strings.TrimSpace(b.Text) != "" {
@@ -717,12 +742,68 @@ func turnFromLine(line []byte) (Turn, bool) {
 				sb.WriteString(b.Text)
 			}
 		}
-		if sb.Len() == 0 {
-			return Turn{}, false
+		if sb.Len() > 0 {
+			data.Turns = append(data.Turns, Turn{
+				Role: "assistant", Text: sb.String(),
+				Timestamp: rec.Timestamp, Sidechain: rec.IsSidechain,
+			})
 		}
-		return Turn{Role: "assistant", Text: sb.String(), Timestamp: rec.Timestamp, Sidechain: rec.IsSidechain}, true
+		for _, b := range blocks {
+			if b.Type == "tool_use" {
+				data.Turns = append(data.Turns, Turn{
+					Role: "tool", Name: b.Name, Query: toolQuery(b.Input),
+					Timestamp: rec.Timestamp, Sidechain: rec.IsSidechain,
+				})
+				if b.ID != "" {
+					pending[b.ID] = len(data.Turns) - 1
+				}
+			}
+		}
 	}
-	return Turn{}, false
+}
+
+// toolQuery picks a single representative string field from a tool's input to
+// show alongside its name (e.g. the command, file path, or pattern).
+func toolQuery(input json.RawMessage) string {
+	if len(input) == 0 {
+		return ""
+	}
+	var m map[string]interface{}
+	if json.Unmarshal(input, &m) != nil {
+		return ""
+	}
+	for _, k := range []string{"command", "file_path", "path", "pattern", "url", "query", "prompt", "description", "notebook_path"} {
+		if v, ok := m[k]; ok {
+			if s, ok := v.(string); ok && s != "" {
+				return truncate(s, 200)
+			}
+		}
+	}
+	return ""
+}
+
+// summarizeResult renders a tool_result's content (a string or a block array)
+// down to a short single line.
+func summarizeResult(content json.RawMessage) string {
+	if len(content) == 0 {
+		return ""
+	}
+	var s string
+	if json.Unmarshal(content, &s) == nil {
+		return truncate(s, 200)
+	}
+	var blocks []contentBlock
+	if json.Unmarshal(content, &blocks) == nil {
+		var sb strings.Builder
+		for _, b := range blocks {
+			if b.Type == "text" && b.Text != "" {
+				sb.WriteString(b.Text)
+				sb.WriteString(" ")
+			}
+		}
+		return truncate(sb.String(), 200)
+	}
+	return ""
 }
 
 // userPromptText returns the human prompt text when a user message's content is

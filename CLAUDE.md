@@ -64,11 +64,13 @@ Rooted at `~/.claude/projects` (`claudeProjectsDir`). Endpoints:
   Project directory names (`-Users-foo-bar`) are **ambiguous to decode**
   (paths can contain `-`), so the real `cwd` is read from inside each file
   rather than reconstructed from the name.
-- `/api/session?id=<dir>/<file>.jsonl` — parses a transcript into prose-only
-  turns. Parsing **streams the file line-by-line**, pre-filters on the substring
-  `"role"` to skip huge non-message records cheaply, and keeps only user *string*
-  prompts and assistant `text` blocks (tool calls/results, thinking, snapshots
-  are dropped). A 146 MB session collapses to a few MB. Results are cached by
+- `/api/session?id=<dir>/<file>.jsonl` — parses a transcript into turns.
+  Parsing **streams the file line-by-line**, pre-filters on the substring
+  `"role"` to skip huge non-message records cheaply, and emits: user *string*
+  prompts, assistant `text` blocks, and one compact `tool` turn per `tool_use`
+  (its `tool_result` is paired back in by `tool_use_id` and summarized into a
+  one-line `result`). Thinking and snapshots are dropped. A 146 MB session
+  collapses to a few MB. Results are cached by
   `path + mtime + size` (transcripts are append-only). The session title comes
   from `ai-title` records (`aiTitle` — Claude's generated name; the listing uses
   the first one in the head budget, the full parse uses the last/freshest),

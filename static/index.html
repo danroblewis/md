@@ -760,6 +760,26 @@ html, body { height: 100%; background: var(--bg); color: var(--fg); font-family:
 .turn-user .turn-body > *:first-child { margin-top: 0; }
 .turn-user .turn-body > *:last-child { margin-bottom: 0; }
 .turn-assistant { padding: 4px 16px 12px; }
+
+/* Compact one-line tool call: name+input left, result right, both ellipsized. */
+.turn-tool {
+  display: flex;
+  gap: 14px;
+  align-items: baseline;
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 1px 16px;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--blockquote-fg);
+}
+#render-panel.full-width .turn-tool { max-width: none; }
+.turn-tool .tool-call { flex: 1 1 58%; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.turn-tool .tool-result { flex: 1 1 42%; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: right; opacity: 0.7; }
+.turn-tool .tool-name { color: var(--link); font-weight: 600; }
+.turn-tool .tool-query { color: var(--fg); opacity: 0.8; }
+
 .turn-sidechain { border-left: 3px solid var(--active-fg); }
 .turn-sidechain .turn-role::after { content: ' · subagent'; font-weight: 400; text-transform: none; }
 
@@ -1757,9 +1777,11 @@ function createSessionWindow(panel, turns) {
   for (let p = 0; p < pageCount; p++) {
     let h = 0;
     for (let i = pageStart(p); i < pageEnd(p); i++) {
-      const t = turns[i].text || '';
+      const turn = turns[i];
+      if (turn.role === 'tool') { h += 20; continue; } // one compact line
+      const t = turn.text || '';
       const lines = t.split('\n').length + Math.floor(t.length / 95);
-      h += Math.max(1, lines) * 22 + (turns[i].role === 'user' ? 60 : 40);
+      h += Math.max(1, lines) * 22 + (turn.role === 'user' ? 60 : 40);
     }
     estPage[p] = h;
   }
@@ -1931,7 +1953,11 @@ function createSessionWindow(panel, turns) {
     matches = [];
     if (query) {
       for (let i = 0; i < turns.length; i++) {
-        if ((turns[i].text || '').toLowerCase().includes(query)) matches.push(i);
+        const tn = turns[i];
+        const hay = tn.role === 'tool'
+          ? ((tn.name || '') + ' ' + (tn.query || '') + ' ' + (tn.result || ''))
+          : (tn.text || '');
+        if (hay.toLowerCase().includes(query)) matches.push(i);
       }
     }
     matchIdx = -1;
@@ -1982,6 +2008,34 @@ function createSessionWindow(panel, turns) {
 }
 
 function buildTurn(turn, index, query) {
+  // Compact one-line tool call: name + input on the left, result on the right.
+  if (turn.role === 'tool') {
+    const el = document.createElement('div');
+    el.className = 'turn turn-tool' + (turn.sidechain ? ' turn-sidechain' : '');
+    if (index != null) el.dataset.turn = index;
+    const call = document.createElement('span');
+    call.className = 'tool-call';
+    const nm = document.createElement('span');
+    nm.className = 'tool-name';
+    nm.textContent = '▸ ' + (turn.name || 'tool');
+    call.appendChild(nm);
+    if (turn.query) {
+      const q = document.createElement('span');
+      q.className = 'tool-query';
+      q.textContent = ' ' + turn.query;
+      call.appendChild(q);
+    }
+    call.title = (turn.name || '') + (turn.query ? ' ' + turn.query : '');
+    const res = document.createElement('span');
+    res.className = 'tool-result';
+    res.textContent = turn.result || '';
+    res.title = turn.result || '';
+    if (query) { highlightMatches(call, query); highlightMatches(res, query); }
+    el.appendChild(call);
+    el.appendChild(res);
+    return el;
+  }
+
   const el = document.createElement('div');
   el.className = 'turn turn-' + turn.role +
     (turn.sidechain ? ' turn-sidechain' : '') +
