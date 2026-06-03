@@ -1786,6 +1786,14 @@ function createSessionWindow(panel, turns) {
   let matches = [];    // turn indices containing the query
   let matchIdx = -1;   // current position within matches
 
+  // Tool turns that should render expanded. Persisted here (not on the DOM
+  // element) so a manual toggle survives the window mounting/unmounting pages.
+  // The most recent tool call starts open.
+  const expandedTools = new Set();
+  for (let i = turns.length - 1; i >= 0; i--) {
+    if (turns[i].role === 'tool') { expandedTools.add(i); break; }
+  }
+
   const pageStart = p => p * PAGE_SIZE;
   const pageEnd   = p => Math.min((p + 1) * PAGE_SIZE, turns.length); // exclusive
 
@@ -1821,7 +1829,7 @@ function createSessionWindow(panel, turns) {
     const el = document.createElement('div');
     el.className = 'turn-page';
     el.dataset.page = p;
-    for (let i = pageStart(p); i < pageEnd(p); i++) el.appendChild(buildTurn(turns[i], i, query));
+    for (let i = pageStart(p); i < pageEnd(p); i++) el.appendChild(buildTurn(turns[i], i, query, expandedTools));
     return el;
   }
   function pages() { return panel.querySelectorAll('.turn-page'); }
@@ -2025,12 +2033,13 @@ function createSessionWindow(panel, turns) {
   };
 }
 
-function buildTurn(turn, index, query) {
+function buildTurn(turn, index, query, expandedTools) {
   // Compact one-line tool call: name + input on the left, result on the right.
   if (turn.role === 'tool') {
     const el = document.createElement('div');
     el.className = 'turn turn-tool' + (turn.sidechain ? ' turn-sidechain' : '');
     if (index != null) el.dataset.turn = index;
+    if (expandedTools && expandedTools.has(index)) el.classList.add('expanded');
     const call = document.createElement('span');
     call.className = 'tool-call';
     const nm = document.createElement('span');
@@ -2049,7 +2058,12 @@ function buildTurn(turn, index, query) {
     if (query) { highlightMatches(call, query); highlightMatches(res, query); }
     el.appendChild(call);
     el.appendChild(res);
-    el.addEventListener('click', () => el.classList.toggle('expanded'));
+    el.addEventListener('click', () => {
+      const open = el.classList.toggle('expanded');
+      if (expandedTools && index != null) {
+        open ? expandedTools.add(index) : expandedTools.delete(index);
+      }
+    });
     return el;
   }
 
