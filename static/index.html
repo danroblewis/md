@@ -590,6 +590,39 @@ html, body { height: 100%; background: var(--bg); color: var(--fg); font-family:
   font-size: 0.875em;
 }
 
+/* Line numbers for whole-file source views. The <pre> becomes a flex row: a
+   fixed, non-selectable gutter of numbers on the left, the highlighted <code>
+   scrolling horizontally on the right. Both share font + line-height so rows
+   line up; the gutter never scrolls with the code. Added only by renderFile()
+   for non-markdown files, so embedded/markdown code blocks are untouched. */
+#render-panel pre.with-line-numbers {
+  display: flex;
+  padding: 0;
+  line-height: 1.5;
+}
+#render-panel pre.with-line-numbers .line-gutter {
+  flex: 0 0 auto;
+  white-space: pre;
+  text-align: right;
+  user-select: none;
+  -webkit-user-select: none;
+  padding: 1em 0.7em 1em 0.9em;
+  color: var(--blockquote-fg);
+  opacity: 0.4;
+  font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+  font-size: 0.875em;
+  line-height: 1.5;
+  border-right: 1px solid var(--border);
+}
+#render-panel pre.with-line-numbers code {
+  display: block;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  padding: 1em;
+  line-height: 1.5;
+}
+
 /* Mermaid diagrams */
 #render-panel .mermaid {
   display: flex;
@@ -748,6 +781,17 @@ html, body { height: 100%; background: var(--bg); color: var(--fg); font-family:
   color: var(--blockquote-fg);
   margin-bottom: 2px;
 }
+/* Muted timestamp shown next to the role label and at the end of tool lines.
+   Relative (e.g. "2m") inline; full datetime on hover via title=. */
+.turn-time {
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+  opacity: 0.65;
+  cursor: default;
+}
+.turn-role .turn-time::before { content: ' · '; }
+.turn-tool .turn-time { flex: 0 0 auto; font-size: 11px; opacity: 0.55; }
 .turn-user {
   background: var(--code-bg);
   border: 1px solid var(--border);
@@ -1272,6 +1316,11 @@ async function renderFile(path, text) {
   // Save scroll as fraction of total height
   const scrollFraction = panel.scrollHeight > 0 ? panel.scrollTop / panel.scrollHeight : 0;
 
+  // Source files read better with horizontal room, so default them to full
+  // width; markdown keeps the user's saved preference. The ↔ toggle still
+  // overrides for the current view (recomputed on the next file render).
+  panel.classList.toggle('full-width', !isMd || localStorage.getItem('fullWidth') === '1');
+
   // Wrap in a .doc block so the document centers as a whole (per-element
   // margins would otherwise pin each block to the left).
   panel.innerHTML = '';
@@ -1282,10 +1331,37 @@ async function renderFile(path, text) {
 
   await enhance(doc);
 
+  // Source files render as a single fenced block; give it a line-number gutter.
+  // Markdown docs are skipped so their prose and embedded code stay clean.
+  if (!isMd) {
+    const pre = doc.querySelector('pre');
+    if (pre) addLineNumbers(pre);
+  }
+
   // Restore scroll after mermaid (SVG expansion may change scrollHeight)
   panel.scrollTop = scrollFraction * panel.scrollHeight;
 
   renderPageTicks();
+}
+
+// Prepend a non-selectable gutter of line numbers to a highlighted <pre>.
+// Counts lines from the rendered text so the gutter matches exactly what's
+// shown; relies on CSS (.with-line-numbers) to align rows with the code.
+function addLineNumbers(pre) {
+  const code = pre.querySelector('code');
+  if (!code || pre.querySelector('.line-gutter')) return;
+  let n = code.textContent.split('\n').length;
+  // marked drops a single trailing newline; don't number a phantom last line.
+  if (code.textContent.endsWith('\n')) n -= 1;
+  if (n < 1) n = 1;
+  let nums = '';
+  for (let i = 1; i <= n; i++) nums += i + '\n';
+  const gutter = document.createElement('span');
+  gutter.className = 'line-gutter';
+  gutter.setAttribute('aria-hidden', 'true');
+  gutter.textContent = nums;
+  pre.classList.add('with-line-numbers');
+  pre.insertBefore(gutter, code);
 }
 
 // Estimated height of one printed page: a US-Letter sheet at 96 CSS dpi
@@ -2033,6 +2109,54 @@ function createSessionWindow(panel, turns) {
   };
 }
 
+// Compact "time ago" for inline display: now, 5m, 2h, 3d, then a short date.
+function relativeTime(iso) {
+  const t = Date.parse(iso);
+  if (isNaN(t)) return '';
+  const s = Math.max(0, (Date.now() - t) / 1000);
+  if (s < 45) return 'now';
+  if (s < 3600) return Math.round(s / 60) + 'm';
+  if (s < 86400) return Math.round(s / 3600) + 'h';
+  if (s < 7 * 86400) return Math.round(s / 86400) + 'd';
+  return new Date(t).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+// Full local datetime for the hover tooltip.
+function absoluteTime(iso) {
+  const t = Date.parse(iso);
+  if (isNaN(t)) return '';
+  return new Date(t).toLocaleString(undefined, {
+    year: 'numeric', month: 'short', day: 'numeric',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+  });
+}
+
+// Build the muted <span class="turn-time"> for a turn, or null if no timestamp.
+function timeSpan(turn) {
+  if (!turn.timestamp) return null;
+  const span = document.createElement('span');
+  span.className = 'turn-time';
+  span.dataset.ts = turn.timestamp;
+  span.textContent = relativeTime(turn.timestamp);
+  span.title = absoluteTime(turn.timestamp);
+  return span;
+}
+
+// Relative labels ("now", "5m") go stale on a page left open. Recompute every
+// mounted .turn-time from its stored ISO, so the window's visible turns stay
+// honest without rebuilding them. Cheap: only currently-mounted spans exist.
+function refreshRelativeTimes() {
+  document.querySelectorAll('.turn-time[data-ts]').forEach(el => {
+    el.textContent = relativeTime(el.dataset.ts);
+  });
+}
+// Tick every 10s so labels stay fresh; also refresh immediately on tab focus
+// so alt-tabbing back never shows a stale "now".
+setInterval(refreshRelativeTimes, 10000);
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) refreshRelativeTimes();
+});
+
 function buildTurn(turn, index, query, expandedTools) {
   // Compact one-line tool call: name + input on the left, result on the right.
   if (turn.role === 'tool') {
@@ -2058,6 +2182,8 @@ function buildTurn(turn, index, query, expandedTools) {
     if (query) { highlightMatches(call, query); highlightMatches(res, query); }
     el.appendChild(call);
     el.appendChild(res);
+    const ttime = timeSpan(turn);
+    if (ttime) el.appendChild(ttime);
     el.addEventListener('click', () => {
       const open = el.classList.toggle('expanded');
       if (expandedTools && index != null) {
@@ -2075,6 +2201,8 @@ function buildTurn(turn, index, query, expandedTools) {
   const role = document.createElement('div');
   role.className = 'turn-role';
   role.textContent = turn.compact ? 'Compaction summary' : (turn.role === 'user' ? 'You' : 'Claude');
+  const rtime = timeSpan(turn);
+  if (rtime) role.appendChild(rtime);
   const body = document.createElement('div');
   body.className = 'turn-body';
   // Both roles render as markdown; the box around user turns provides the
