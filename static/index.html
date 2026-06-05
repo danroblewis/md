@@ -883,6 +883,46 @@ mark.search-hit { background: #fde68a; color: inherit; border-radius: 2px; paddi
 mark.search-hit-active { background: #f59e0b; box-shadow: 0 0 0 2px #f59e0b; }
 [data-theme="dark"] mark.search-hit { background: #92560a; color: #fff; }
 [data-theme="dark"] mark.search-hit-active { background: #d97706; box-shadow: 0 0 0 2px #d97706; }
+
+/* ── Goalpost / Progress view ──────────────────────────── */
+:root {
+  --pass: #16a34a; --pass-bg: #dcfce7;
+  --fail: #dc2626; --fail-bg: #fee2e2;
+  --errored: #d97706; --errored-bg: #fef3c7;
+}
+[data-theme="dark"] {
+  --pass: #4ade80; --pass-bg: #14331f;
+  --fail: #f87171; --fail-bg: #3a1717;
+  --errored: #fbbf24; --errored-bg: #3a2c0c;
+}
+#goalpost-list { display: none; padding: 6px; overflow-y: auto; }
+.gp-goal-item { padding: 8px 10px; border-radius: 6px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.gp-goal-item:hover { background: var(--hover-bg); }
+.gp-goal-item.active { background: var(--active-bg); color: var(--active-fg); }
+.gp-goal-item .gp-goal-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gp-tally { font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; opacity: 0.85; }
+
+#goalpost-panel { flex: 1; overflow-y: auto; padding: 24px 28px; max-width: 920px; }
+#goalpost-panel.full-width { max-width: none; }
+.gp-empty { color: var(--blockquote-fg); padding: 40px 0; text-align: center; }
+.gp-goal-title { font-size: 20px; font-weight: 700; margin: 0 0 4px; }
+.gp-goal-sub { color: var(--blockquote-fg); font-size: 13px; margin-bottom: 20px; }
+.gp-section-h { font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--blockquote-fg); margin: 22px 0 8px; }
+.gp-measure { display: grid; grid-template-columns: 1fr auto; gap: 4px 14px; align-items: center; padding: 12px 14px; border: 1px solid var(--border); border-radius: 8px; margin-bottom: 8px; background: var(--bg); }
+.gp-measure.errored { border-color: var(--errored); }
+.gp-m-name { font-weight: 600; }
+.gp-m-name .gp-rung { font-weight: 400; font-size: 11px; color: var(--blockquote-fg); margin-left: 8px; text-transform: uppercase; letter-spacing: 0.04em; }
+.gp-m-name .gp-rung.judge { color: var(--errored); }
+.gp-m-value { font-variant-numeric: tabular-nums; text-align: right; font-size: 15px; }
+.gp-m-value .gp-target { color: var(--blockquote-fg); font-size: 12px; }
+.gp-pill { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 11px; font-weight: 700; letter-spacing: 0.03em; }
+.gp-pill.pass { background: var(--pass-bg); color: var(--pass); }
+.gp-pill.fail { background: var(--fail-bg); color: var(--fail); }
+.gp-pill.errored { background: var(--errored-bg); color: var(--errored); }
+.gp-spark { grid-column: 1 / -1; margin-top: 6px; }
+.gp-spark svg { display: block; width: 100%; height: 40px; }
+.gp-err-msg { grid-column: 1 / -1; color: var(--errored); font-size: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; margin-top: 4px; white-space: pre-wrap; word-break: break-word; }
+.gp-stale { font-size: 11px; color: var(--blockquote-fg); }
 </style>
 </head>
 <body>
@@ -892,6 +932,7 @@ mark.search-hit-active { background: #f59e0b; box-shadow: 0 0 0 2px #f59e0b; }
     <div id="mode-tabs">
       <button class="mode-tab active" id="tab-files" data-mode="files">Files</button>
       <button class="mode-tab" id="tab-sessions" data-mode="sessions">Sessions</button>
+      <button class="mode-tab" id="tab-goalpost" data-mode="goalpost">Progress</button>
     </div>
     <div id="search-box">
       <input id="search-input" type="text" placeholder="Search files..." autocomplete="off" spellcheck="false">
@@ -899,6 +940,7 @@ mark.search-hit-active { background: #f59e0b; box-shadow: 0 0 0 2px #f59e0b; }
     </div>
     <div id="file-tree"></div>
     <div id="session-list"></div>
+    <div id="goalpost-list"></div>
   </aside>
 
   <div id="sidebar-resizer" title="Drag to resize sidebar"></div>
@@ -929,6 +971,7 @@ mark.search-hit-active { background: #f59e0b; box-shadow: 0 0 0 2px #f59e0b; }
       </div>
     </div>
     <div id="editor-panel" tabindex="-1"></div>
+    <div id="goalpost-panel" style="display:none"></div>
   </main>
 </div>
 
@@ -1104,10 +1147,12 @@ const state = {
   currentPath: null,
   editorInstance: null,
   isEditing: false,
-  mode: 'files',          // 'files' | 'sessions'
+  mode: 'files',          // 'files' | 'sessions' | 'goalpost'
   sessionGroups: null,    // cached /api/sessions response
   currentSessionId: null,
   sessionRender: null,    // { turns, index, observer } for incremental rendering
+  goalpostGoal: null,     // selected goal id in Progress view
+  goalpostTimer: null,    // poll interval handle (active only in Progress mode)
 };
 
 // ── Extension → language map ────────────────────────────
@@ -1588,16 +1633,203 @@ function switchMode(mode) {
   state.mode = mode;
   document.querySelectorAll('.mode-tab').forEach(t => t.classList.toggle('active', t.dataset.mode === mode));
 
-  const filesView = mode === 'files';
-  document.getElementById('file-tree').style.display = filesView ? '' : 'none';
-  document.getElementById('session-list').style.display = filesView ? 'none' : 'block';
+  document.getElementById('file-tree').style.display = mode === 'files' ? '' : 'none';
+  document.getElementById('session-list').style.display = mode === 'sessions' ? 'block' : 'none';
+  document.getElementById('goalpost-list').style.display = mode === 'goalpost' ? 'block' : 'none';
+  document.getElementById('search-box').style.display = mode === 'goalpost' ? 'none' : '';
+
+  // Progress mode takes over the main panel; restore file/session view otherwise.
+  const gpPanel = document.getElementById('goalpost-panel');
+  const renderPanel = document.getElementById('render-panel');
+  gpPanel.style.display = mode === 'goalpost' ? 'flex' : 'none';
+  renderPanel.style.display = mode === 'goalpost' ? 'none' : '';
 
   const input = document.getElementById('search-input');
   input.value = '';
-  input.placeholder = filesView ? 'Search files...' : 'Filter sessions...';
+  input.placeholder = mode === 'files' ? 'Search files...' : 'Filter sessions...';
   document.getElementById('search-results').innerHTML = '';
 
-  if (!filesView) loadSessions();
+  // Only poll for metrics while the Progress view is open.
+  clearInterval(state.goalpostTimer); state.goalpostTimer = null;
+  if (mode === 'goalpost') {
+    loadGoalpost();
+    state.goalpostTimer = setInterval(loadGoalpost, 5000);
+  } else if (mode === 'sessions') {
+    loadSessions();
+  }
+}
+
+// ── Goalpost / Progress view ────────────────────────────
+function gpEsc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+}
+
+function gpTimeAgo(ts) {
+  const d = (Date.now() - new Date(ts).getTime()) / 1000;
+  if (!isFinite(d) || d < 0) return '';
+  if (d < 90) return Math.round(d) + 's ago';
+  if (d < 5400) return Math.round(d / 60) + 'm ago';
+  if (d < 129600) return Math.round(d / 3600) + 'h ago';
+  return Math.round(d / 86400) + 'd ago';
+}
+
+// Worst status across a goal's measures, for the sidebar dot/tally.
+function gpGoalStatus(measures) {
+  if (measures.some(m => m.status === 'errored')) return 'errored';
+  const gates = measures.filter(m => m.kind === 'gate' && m.status === 'ok');
+  if (gates.length && gates.every(m => m.passed)) return 'pass';
+  return 'fail';
+}
+
+async function loadGoalpost() {
+  let measures = [];
+  try {
+    const res = await fetch('/api/goalpost').then(r => r.json());
+    measures = res.measures || [];
+  } catch (e) { /* server may not have collection enabled */ }
+  state.goalpostMeasures = measures;
+
+  // Group by goal, preserving sorted order from the API.
+  const goals = new Map();
+  for (const m of measures) {
+    if (!goals.has(m.goal)) goals.set(m.goal, []);
+    goals.get(m.goal).push(m);
+  }
+  if (!goals.has(state.goalpostGoal)) {
+    state.goalpostGoal = goals.size ? goals.keys().next().value : null;
+  }
+  renderGoalpostSidebar(goals);
+  renderGoalpostPanel(state.goalpostGoal, goals.get(state.goalpostGoal) || []);
+}
+
+function renderGoalpostSidebar(goals) {
+  const el = document.getElementById('goalpost-list');
+  if (!goals.size) {
+    el.innerHTML = '<div style="padding:12px;color:var(--blockquote-fg);font-size:12px;">No measures yet. Add <code>.goalpost/measures/</code> scripts to this project.</div>';
+    return;
+  }
+  const dot = { pass: 'var(--pass)', fail: 'var(--fail)', errored: 'var(--errored)' };
+  let html = '';
+  for (const [goal, measures] of goals) {
+    const gates = measures.filter(m => m.kind === 'gate');
+    const passed = gates.filter(m => m.passed).length;
+    const status = gpGoalStatus(measures);
+    const active = goal === state.goalpostGoal ? ' active' : '';
+    const emoji = { pass: '🟢', fail: '🟡', errored: '🟠' }[status] || '⚪';
+    html += `<div class="gp-goal-item${active}" data-goal="${gpEsc(goal)}">
+      <span class="gp-goal-name">${emoji} ${gpEsc(goal)}</span>
+      <span class="gp-tally" style="color:${dot[status]}">${passed}/${gates.length} gates</span>
+    </div>`;
+  }
+  el.innerHTML = html;
+  for (const item of el.querySelectorAll('.gp-goal-item')) {
+    item.addEventListener('click', () => {
+      state.goalpostGoal = item.dataset.goal;
+      loadGoalpost();
+    });
+  }
+}
+
+function renderGoalpostPanel(goal, measures) {
+  const el = document.getElementById('goalpost-panel');
+  if (!goal) {
+    el.innerHTML = '<div class="gp-empty">No goal selected. Add <code>.goalpost/measures/</code> scripts to start measuring progress.</div>';
+    return;
+  }
+  if (localStorage.getItem('fullWidth') === '1') el.classList.add('full-width');
+
+  const gates = measures.filter(m => m.kind === 'gate');
+  const trends = measures.filter(m => m.kind !== 'gate');
+  const okGates = gates.filter(m => m.status === 'ok');
+  const passed = okGates.filter(m => m.passed).length;
+  const errored = measures.filter(m => m.status === 'errored').length;
+
+  let html = `<h1 class="gp-goal-title">${gpEsc(goal)}</h1>
+    <div class="gp-goal-sub">${passed}/${gates.length} gates met` +
+    (errored ? ` · <span style="color:var(--errored)">${errored} ruler${errored > 1 ? 's' : ''} errored</span>` : '') +
+    `</div>`;
+
+  if (gates.length) {
+    html += '<div class="gp-section-h">Gates — definition of done</div>';
+    html += gates.map(gpMeasureHTML).join('');
+  }
+  if (trends.length) {
+    html += '<div class="gp-section-h">Trends — trajectory</div>';
+    html += trends.map(gpMeasureHTML).join('');
+  }
+  el.innerHTML = html;
+
+  // Draw a sparkline for each measure from its change-history.
+  for (const m of measures) {
+    if (m.status === 'errored') continue;
+    const slot = el.querySelector(`.gp-spark[data-measure="${CSS.escape(m.measure)}"]`);
+    if (slot) gpDrawSpark(slot, goal, m);
+  }
+}
+
+function gpMeasureHTML(m) {
+  const rung = m.rung === 'judge' ? '<span class="gp-rung judge">judge</span>' : '<span class="gp-rung">deterministic</span>';
+  if (m.status === 'errored') {
+    return `<div class="gp-measure errored">
+      <div class="gp-m-name">${gpEsc(m.measure)} ${rung}</div>
+      <div><span class="gp-pill errored">ERRORED</span></div>
+      <div class="gp-err-msg">${gpEsc(m.error || 'measurement failed')}</div>
+    </div>`;
+  }
+  const unit = m.unit ? ' ' + gpEsc(m.unit) : '';
+  const tgt = (m.target != null)
+    ? `<span class="gp-target"> / ${gpEsc(m.target)}${unit} ${m.higher_is_better ? '↑' : '↓'}</span>` : '';
+  let badge = '';
+  if (m.kind === 'gate') {
+    badge = m.passed ? '<span class="gp-pill pass">PASS</span>' : '<span class="gp-pill fail">NOT MET</span>';
+  }
+  return `<div class="gp-measure">
+    <div class="gp-m-name">${gpEsc(m.measure)} ${rung}</div>
+    <div class="gp-m-value"><b>${gpEsc(m.value)}</b>${unit}${tgt} ${badge}</div>
+    <div class="gp-stale">updated ${gpTimeAgo(m.ts)}</div>
+    <div class="gp-spark" data-measure="${gpEsc(m.measure)}"></div>
+  </div>`;
+}
+
+async function gpDrawSpark(slot, goal, m) {
+  let hist = [];
+  try {
+    const res = await fetch('/api/goalpost?goal=' + encodeURIComponent(goal) +
+      '&measure=' + encodeURIComponent(m.measure)).then(r => r.json());
+    hist = res.history || [];
+  } catch (e) { return; }
+  if (hist.length < 1) return;
+  slot.innerHTML = gpSparkSVG(hist, m.target, m.passed, m.kind);
+}
+
+// Step-line sparkline over the change-series, with an optional dashed target.
+function gpSparkSVG(hist, target, passed, kind) {
+  const W = 100, H = 40, pad = 3;
+  const vals = hist.map(p => p.value);
+  if (target != null) vals.push(target);
+  let lo = Math.min(...vals), hi = Math.max(...vals);
+  if (lo === hi) { lo -= 1; hi += 1; }
+  const y = v => H - pad - ((v - lo) / (hi - lo)) * (H - 2 * pad);
+  const t0 = new Date(hist[0].ts).getTime();
+  const t1 = new Date(hist[hist.length - 1].ts).getTime();
+  const x = (p, i) => (t1 === t0) ? (hist.length === 1 ? W / 2 : (i / (hist.length - 1)) * W)
+    : ((new Date(p.ts).getTime() - t0) / (t1 - t0)) * W;
+  // Step path: hold each value until the next change.
+  let d = '';
+  hist.forEach((p, i) => {
+    const px = x(p, i), py = y(p.value);
+    if (i === 0) { d += `M ${px.toFixed(1)} ${py.toFixed(1)}`; }
+    else { d += ` H ${px.toFixed(1)} V ${py.toFixed(1)}`; }
+  });
+  d += ` H ${W}`; // hold the latest value to the right edge
+  const stroke = kind === 'gate' ? (passed ? 'var(--pass)' : 'var(--fail)') : 'var(--link)';
+  let tline = '';
+  if (target != null) {
+    const ty = y(target).toFixed(1);
+    tline = `<line x1="0" y1="${ty}" x2="${W}" y2="${ty}" stroke="var(--blockquote-fg)" stroke-width="0.6" stroke-dasharray="2 2" opacity="0.7"/>`;
+  }
+  return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">${tline}` +
+    `<path d="${d}" fill="none" stroke="${stroke}" stroke-width="1.4" vector-effect="non-scaling-stroke"/></svg>`;
 }
 
 // ── Sessions list ───────────────────────────────────────

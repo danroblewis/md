@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"embed"
 	"encoding/json"
 	"flag"
@@ -103,10 +104,10 @@ type contentBlock struct {
 	Type      string          `json:"type"`
 	Text      string          `json:"text"`
 	Name      string          `json:"name"`        // tool_use
-	Input     json.RawMessage `json:"input"`        // tool_use
+	Input     json.RawMessage `json:"input"`       // tool_use
 	ID        string          `json:"id"`          // tool_use
 	ToolUseID string          `json:"tool_use_id"` // tool_result
-	Content   json.RawMessage `json:"content"`      // tool_result (string or block array)
+	Content   json.RawMessage `json:"content"`     // tool_result (string or block array)
 }
 
 // Broker manages SSE clients.
@@ -202,6 +203,14 @@ func main() {
 	mux.HandleFunc("/api/search", handleSearch(absDir))
 	mux.HandleFunc("/api/config", handleConfig(initialFile))
 	mux.HandleFunc("/events", handleSSE(broker))
+
+	// Goalpost progress collection for the launched project (in-process).
+	if store, err := newJSONLStore(goalpostStoreDir(), absDir); err == nil {
+		newCollector(absDir, store).start(context.Background())
+		mux.HandleFunc("/api/goalpost", handleGoalpost(store))
+	} else {
+		log.Printf("goalpost collection disabled: %v", err)
+	}
 
 	// Claude Code transcript browsing (~/.claude/projects).
 	if projectsDir, err := claudeProjectsDir(); err == nil {
