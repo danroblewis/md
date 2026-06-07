@@ -13,6 +13,25 @@ A lightweight markdown file viewer with live reload.
 - **Dark mode** — follows your OS appearance by default; toggle to override
 - **Print-page ticks** — marks down the right edge of a document estimating where print pages would break
 - **Claude Code session viewer** — browse and read `~/.claude/projects` transcripts as rendered markdown
+- **Phone friendly** — the sidebar becomes a slide-over drawer on small screens; serve with `-listen` to reach it from your phone
+
+## Phone access
+
+By default the server binds a random localhost port, unreachable from other
+devices. To read from your phone, bind a real port:
+
+```bash
+./md -listen :8080 .
+```
+
+The startup log prints the `http://<lan-ip>:8080` URL to open on your phone.
+
+**Be careful where you do this:** the server lets anyone who can connect read
+*and edit* the served directory (and read your Claude Code transcripts), so
+only expose it on a network you trust. A safer option is a private overlay
+network like [Tailscale](https://tailscale.com), which makes the URL reachable
+from your devices only. On a phone the UI is read-only (no Edit mode); the
+sidebar opens from the ☰ button.
 
 ## Session viewer
 
