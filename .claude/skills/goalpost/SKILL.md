@@ -1,6 +1,22 @@
 ---
 name: goalpost
-description: Author or amend independent, programmatic "goalpost" measure scripts that track ground-truth progress toward a goal — a small set of gates (definition-of-done) and trends (burndown) that emit a common JSON format and measure real artifacts (tests, files, endpoints, counts), never the agent's self-report. Use when the user wants to measure progress against a goal without trusting what an agent claims about its own progress, or when a goal has changed and the measures need revising. Run in a session separate from the one doing the work — the measurer must be independent of the doer.
+description: >-
+  Author or amend independent, programmatic "goalpost" measure scripts that
+  track ground-truth progress toward a goal — a small set of gates
+  (definition-of-done) and trends (burndown) that emit a common JSON format
+  and measure real artifacts (tests, files, endpoints, counts), never the
+  agent's self-report. TRIGGERS — invoke when any of these holds — (1) the
+  user asks to measure progress toward a goal without trusting agent self-
+  reports; (2) you are starting goal-directed work and no .goalpost/ exists
+  for the active goal; (3) you NOTICE THE GOAL HAS CHANGED — the stated goal,
+  plan, or scope no longer matches what .goalpost/measures/ measures: a target
+  is obsolete, a measure inspects artifacts that no longer exist, done-
+  conditions exist that nothing measures, or the user redefined success (use
+  `amend`, which records the move in CHANGELOG.md). INDEPENDENCE — the
+  measurer must not be the doer: if you are the agent doing the work, do not
+  author/amend measures inline; dispatch this skill to a fresh subagent given
+  only the goal statement and repo (never your plan or progress notes), then
+  continue working while a human reviews.
 ---
 
 # Goalpost

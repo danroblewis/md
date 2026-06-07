@@ -57,6 +57,25 @@ and sorted newest-first. Click one to read it as a clean, chat-style transcript.
 - **Shareable URLs** — the open session is reflected in the URL, so a refresh or
   bookmark reopens it.
 
+## Goalposts
+
+md can track **ground-truth progress toward a goal** — measures of real
+artifacts (tests, files, endpoints, counts), never an agent's self-report.
+A project opts in by adding `.goalpost/measures/` containing small
+self-describing scripts; md discovers new scripts within a minute, runs each
+on its own schedule (60s floor, backing off to the script's runtime or its
+declared `period_s`), and stores a point whenever a value changes.
+
+**To adopt it in your repo:** copy `.claude/skills/goalpost/` from this
+repository into your project's `.claude/skills/` directory. Claude Code picks
+the skill up automatically — then ask for `/goalpost author <your goal>` (or
+just describe the goal; the skill's triggers cover authoring, amending when
+the goal changes, and keeping the measurer independent of the agent doing the
+work). The skill's `prompt.md` is the full spec: directory layout, JSON output
+format, script time budgets, the artifact pattern for expensive checks, an
+SLI/SLO-style decision tree, and a catalog of useful measures. It's also
+paste-able into a bare session if you don't use skills.
+
 ## Example Diagram
 
 ```mermaid
