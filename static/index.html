@@ -370,7 +370,9 @@
 
 html, body { height: 100%; background: var(--bg); color: var(--fg); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 14px; }
 
-#app { display: flex; height: 100vh; overflow: hidden; }
+/* dvh tracks the visible viewport on mobile (the URL bar collapses/expands);
+   the vh line is the fallback for browsers without dvh support. */
+#app { display: flex; height: 100vh; height: 100dvh; overflow: hidden; }
 
 /* ── Sidebar ───────────────────────────────────────────── */
 #sidebar {
@@ -565,6 +567,10 @@ html, body { height: 100%; background: var(--bg); color: var(--fg); font-family:
   background: var(--code-bg);
   border-radius: 0 4px 4px 0;
 }
+/* Tables sit in a horizontal scroll box (added by enhance()) so a wide table
+   pans on narrow screens instead of stretching the whole page. */
+#render-panel .table-wrap { overflow-x: auto; margin: 1em 0; }
+#render-panel .table-wrap table { margin: 0; }
 #render-panel table { border-collapse: collapse; width: 100%; margin: 1em 0; }
 #render-panel th, #render-panel td { border: 1px solid var(--border); padding: 6px 12px; text-align: left; }
 #render-panel th { background: var(--code-bg); font-weight: 600; }
@@ -930,6 +936,74 @@ mark.search-hit-active { background: #f59e0b; box-shadow: 0 0 0 2px #f59e0b; }
 .gp-spark svg { display: block; width: 100%; height: 40px; }
 .gp-err-msg { grid-column: 1 / -1; color: var(--errored); font-size: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; margin-top: 4px; white-space: pre-wrap; word-break: break-word; }
 .gp-stale { font-size: 11px; color: var(--blockquote-fg); }
+
+/* ── Phone layout ─────────────────────────────────────────
+   Below the breakpoint the sidebar becomes a slide-over drawer toggled by the
+   ☰ toolbar button (hidden on desktop), with a scrim to dismiss. Everything
+   here only adjusts presentation — no behavior forks outside the drawer JS. */
+#menu-btn { display: none; }
+#sidebar-scrim { display: none; }
+
+@media (max-width: 720px) {
+  #menu-btn { display: inline-block; }
+
+  /* The drawer. !important beats the inline width saved by the desktop
+     drag-resizer (localStorage sidebarWidth). */
+  #sidebar {
+    position: fixed;
+    top: 0; left: 0; bottom: 0;
+    z-index: 50;
+    width: min(85vw, 320px) !important;
+    max-width: none;
+    transform: translateX(-105%);
+    transition: transform 0.2s ease;
+    box-shadow: 4px 0 24px rgba(0, 0, 0, 0.25);
+  }
+  body.sidebar-open #sidebar { transform: translateX(0); }
+  body.sidebar-open #sidebar-scrim {
+    display: block;
+    position: fixed; inset: 0; z-index: 40;
+    background: rgba(0, 0, 0, 0.4);
+  }
+  /* Drag-resize has no touch affordance; the drawer is fixed-width. */
+  #sidebar-resizer { display: none; }
+
+  /* CodeMirror on a phone keyboard is a losing battle — phone view is
+     read-only. !important beats the inline display openFile() sets. */
+  #edit-btn { display: none !important; }
+  /* The prose column already fills the screen; nothing to toggle. */
+  #width-toggle { display: none; }
+
+  /* Let the session find/nav controls wrap to their own toolbar row. */
+  #toolbar { flex-wrap: wrap; padding: 6px 8px; row-gap: 4px; }
+  #session-find { flex: 1 1 auto; }
+  #find-input { width: 0; flex: 1 1 100px; }
+
+  /* Reclaim desktop padding for content width. */
+  #render-panel { padding: 1rem 0.9rem; }
+  #goalpost-panel { padding: 16px 14px; }
+  .turn-user { padding: 10px 12px; }
+  .turn-assistant { padding: 4px 12px 12px; }
+
+  /* ~44px touch targets; 16px inputs stop iOS zoom-on-focus. */
+  .tree-item, .tree-dir-label { padding: 8px; }
+  .session-item { padding: 8px 10px 8px 16px; }
+  .session-title { font-size: 13px; }
+  .session-items { max-height: 280px; }
+  .mode-tab { padding: 11px 8px; }
+  .toolbar-btn { padding: 7px 12px; }
+  #search-input, #find-input { font-size: 16px; padding: 8px; }
+
+  /* Tool rows: the side-by-side call/result columns are illegible at ~150px
+     each — stack them, call over result, both still one ellipsized line. */
+  .turn-tool { flex-direction: column; gap: 0; padding: 6px 12px; }
+  .turn-tool .tool-call, .turn-tool .tool-result {
+    flex: none;
+    width: 100%;
+    text-align: left;
+  }
+  .turn-tool .tool-result { padding-left: 1em; }
+}
 </style>
 </head>
 <body>
@@ -951,9 +1025,11 @@ mark.search-hit-active { background: #f59e0b; box-shadow: 0 0 0 2px #f59e0b; }
   </aside>
 
   <div id="sidebar-resizer" title="Drag to resize sidebar"></div>
+  <div id="sidebar-scrim"></div>
 
   <main id="content">
     <div id="toolbar">
+      <button class="toolbar-btn" id="menu-btn" title="Files &amp; sessions">☰</button>
       <span id="current-file-name"></span>
       <span id="session-find" style="display:none">
         <input id="find-input" type="text" placeholder="Find in transcript… (⌘F)" autocomplete="off" spellcheck="false">
@@ -1343,6 +1419,7 @@ async function openFile(path, fromPopstate) {
   }
 
   setActiveTreeItem(path);
+  closeSidebarDrawer();
   document.getElementById('current-file-name').textContent = path;
   document.getElementById('edit-btn').style.display = '';
 
@@ -1453,6 +1530,14 @@ window.addEventListener('resize', () => {
 async function enhance(root) {
   root.querySelectorAll('pre code').forEach(el => {
     if (el.dataset.highlighted !== 'yes') hljs.highlightElement(el);
+  });
+  // Wide tables pan instead of stretching the page (see .table-wrap).
+  root.querySelectorAll('table').forEach(t => {
+    if (t.parentElement.classList.contains('table-wrap')) return;
+    const wrap = document.createElement('div');
+    wrap.className = 'table-wrap';
+    t.parentNode.insertBefore(wrap, t);
+    wrap.appendChild(t);
   });
   const mermaidNodes = root.querySelectorAll('div.mermaid:not([data-processed])');
   if (mermaidNodes.length > 0) {
@@ -1732,6 +1817,7 @@ function renderGoalpostSidebar(goals) {
   for (const item of el.querySelectorAll('.gp-goal-item')) {
     item.addEventListener('click', () => {
       state.goalpostGoal = item.dataset.goal;
+      closeSidebarDrawer();
       loadGoalpost();
     });
   }
@@ -1878,12 +1964,17 @@ function renderSessionList(groups, filter) {
     label.title = g.project;
     groupEl.appendChild(label);
 
+    // Items live in their own scroll box so a folder with many sessions stays
+    // compact (see .session-items).
+    const itemsEl = document.createElement('div');
+    itemsEl.className = 'session-items';
+    let activeItem = null;
     for (const s of sessions) {
       shown++;
       const item = document.createElement('div');
       item.className = 'session-item';
       item.dataset.id = s.id;
-      if (s.id === state.currentSessionId) item.classList.add('active');
+      if (s.id === state.currentSessionId) { item.classList.add('active'); activeItem = item; }
       const date = new Date(s.modUnix * 1000).toLocaleString();
       item.innerHTML =
         '<span class="session-title"></span>' +
@@ -1891,9 +1982,13 @@ function renderSessionList(groups, filter) {
       item.querySelector('.session-title').textContent = s.title;
       item.title = s.title;
       item.onclick = () => openSession(s.id, s.title);
-      groupEl.appendChild(item);
+      itemsEl.appendChild(item);
     }
+    groupEl.appendChild(itemsEl);
     container.appendChild(groupEl);
+    // The active session may sit past the scroll box's fold (e.g. opened via a
+    // ?session= URL); bring it into view within both nested and outer scrolls.
+    if (activeItem) activeItem.scrollIntoView({ block: 'nearest' });
   }
   if (shown === 0) {
     container.innerHTML = '<div style="padding:12px;color:var(--blockquote-fg);font-size:12px;">No matching sessions.</div>';
@@ -1920,6 +2015,7 @@ async function openSession(id, title, fromPopstate) {
   document.querySelectorAll('.session-item.active').forEach(el => el.classList.remove('active'));
   const item = document.querySelector(`.session-item[data-id="${CSS.escape(id)}"]`);
   if (item) item.classList.add('active');
+  closeSidebarDrawer();
 
   document.getElementById('current-file-name').textContent = title || id;
   document.getElementById('edit-btn').style.display = 'none';
@@ -2018,6 +2114,15 @@ async function reloadSession() {
   window._resetFind = () => { input.value = ''; count.textContent = ''; };
 })();
 
+// ── Mobile sidebar drawer (☰ button; see the phone-layout CSS) ──
+// The body class only has an effect below the breakpoint, so toggling it is
+// harmless on desktop (where #menu-btn is hidden anyway).
+function closeSidebarDrawer() { document.body.classList.remove('sidebar-open'); }
+document.getElementById('menu-btn').addEventListener('click', () => {
+  document.body.classList.toggle('sidebar-open');
+});
+document.getElementById('sidebar-scrim').addEventListener('click', closeSidebarDrawer);
+
 // ── Sidebar resize (drag the handle on its right edge) ───
 (function () {
   const sidebar = document.getElementById('sidebar');
@@ -2053,6 +2158,10 @@ async function reloadSession() {
 
 const PAGE_SIZE = 20;     // turns per page
 const WINDOW_PAGES = 3;   // pages kept mounted at once (prev / current / next)
+// Prefetch margin in viewport-heights. Touch flings keep scrolling during
+// momentum (with throttled scroll events on iOS), so mount the next page
+// earlier there to keep the viewport off the spacers mid-fling.
+const PREFETCH_VH = window.matchMedia('(pointer: coarse)').matches ? 3 : 2;
 
 function renderSession(data, restore) {
   const panel = document.getElementById('render-panel');
@@ -2224,8 +2333,8 @@ function createSessionWindow(panel, turns) {
     }
     let guard = 0;
     while (guard++ < WINDOW_PAGES + 1) {
-      if (winEnd < pageCount - 1 && st + vh * 2 >= botSpacer.offsetTop) { shiftDown(); continue; }
-      if (winStart > 0 && st <= topH() + vh) { shiftUp(); continue; }
+      if (winEnd < pageCount - 1 && st + vh * PREFETCH_VH >= botSpacer.offsetTop) { shiftDown(); continue; }
+      if (winStart > 0 && st <= topH() + vh * (PREFETCH_VH - 1)) { shiftUp(); continue; }
       break;
     }
   }

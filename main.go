@@ -143,9 +143,10 @@ func (b *Broker) Publish(msg string) {
 
 func main() {
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: mdserver [path]\n\n  path   directory or file to open (default: current directory)\n  -depth N  max directory depth to scan and watch (default 3)\n")
+		fmt.Fprintf(os.Stderr, "Usage: mdserver [path]\n\n  path   directory or file to open (default: current directory)\n  -depth N  max directory depth to scan and watch (default 3)\n  -listen ADDR  listen address (default 127.0.0.1:0, a random localhost port);\n                use :8080 to reach the server from other devices, e.g. a phone\n")
 	}
 	depthFlag := flag.Int("depth", 3, "max directory depth to scan and watch")
+	listenFlag := flag.String("listen", "127.0.0.1:0", "listen address; use :8080 to reach the server from other devices")
 	flag.Parse()
 	maxDepth := *depthFlag
 
@@ -222,18 +223,37 @@ func main() {
 		log.Printf("session browsing disabled: %v", err)
 	}
 
-	// Bind to a random localhost port.
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	// Bind the listen address (default: a random localhost port).
+	ln, err := net.Listen("tcp", *listenFlag)
 	if err != nil {
 		log.Fatalf("listen error: %v", err)
 	}
-	port := ln.Addr().(*net.TCPAddr).Port
+	addr := ln.Addr().(*net.TCPAddr)
+	port := fmt.Sprint(addr.Port)
 
-	url := fmt.Sprintf("http://127.0.0.1:%d", port)
+	// The bound IP may be unspecified (":8080"), which isn't a dialable host —
+	// open the browser via loopback then, or via the specific IP otherwise.
+	openHost := "127.0.0.1"
+	if !addr.IP.IsUnspecified() && !addr.IP.IsLoopback() {
+		openHost = addr.IP.String()
+	}
+	url := "http://" + net.JoinHostPort(openHost, port)
 	if initialFile != "" {
 		url += "/?file=" + initialFile
 	}
 	log.Printf("Serving %s at %s", absDir, url)
+
+	// When exposed beyond loopback, print the URLs a phone on the same network
+	// can reach, and warn: /api/file accepts writes, so anyone who can connect
+	// can read and edit files under the served directory.
+	if !addr.IP.IsLoopback() {
+		if addr.IP.IsUnspecified() {
+			for _, ip := range lanIPs() {
+				log.Printf("  on your network: http://%s", net.JoinHostPort(ip, port))
+			}
+		}
+		log.Printf("WARNING: -listen %s is reachable from other devices; anyone on the network can read and edit files under %s", *listenFlag, absDir)
+	}
 
 	// Open browser shortly after server starts.
 	time.AfterFunc(150*time.Millisecond, func() { openBrowser(url) })
@@ -246,6 +266,26 @@ func handleConfig(initialFile string) http.HandlerFunc {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{"initialFile": initialFile})
 	}
+}
+
+// lanIPs returns the host's non-loopback, non-link-local IPv4 addresses, for
+// printing reachable URLs when -listen binds the unspecified address.
+func lanIPs() []string {
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return nil
+	}
+	var ips []string
+	for _, a := range addrs {
+		ipn, ok := a.(*net.IPNet)
+		if !ok || ipn.IP.IsLoopback() || ipn.IP.IsLinkLocalUnicast() {
+			continue
+		}
+		if ip4 := ipn.IP.To4(); ip4 != nil {
+			ips = append(ips, ip4.String())
+		}
+	}
+	return ips
 }
 
 func openBrowser(url string) {
