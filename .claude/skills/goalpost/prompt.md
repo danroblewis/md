@@ -97,8 +97,21 @@ whole panel, and anything past **10 minutes is killed** and surfaces as
 |---|---|
 | < 5s | ideal — measure directly |
 | 5–30s | acceptable — declare a matching `period_s` (e.g. 300) |
-| 30s–2m | borderline — only if genuinely valuable; `period_s` ≥ 900 |
-| > 2m | **do not run it in the measure** — use the artifact pattern |
+| 30s–60s | borderline — only if genuinely valuable; `period_s` ≥ 900 |
+| > 60s | **do not run it in the measure** — use the artifact pattern |
+
+**Enforce the deadline yourself with `timeout`.** A measure must *complete*
+within 60s, not merely usually be fast — a wedged test binary or unreachable
+endpoint otherwise hangs the panel until md's 10-minute kill. Wrap every
+command that can stall (test runners, network probes, solvers) in
+`timeout <secs>`, sized so the whole script finishes under 60s:
+
+```bash
+out=$(timeout 50 go test ./... -count=1 2>&1) || rc=$?
+```
+
+A `timeout` firing means the measurement failed, not that the gate failed —
+exit non-zero (ruler broken → `errored`); never report a made-up value.
 
 **The artifact pattern.** A 30-minute test suite is a terrible measure script
 but a great measure. Have the thing that *already runs it* (CI, the doer's own
@@ -253,7 +266,7 @@ when the underlying quantity is the same.
 # Gate: the full test suite passes. Inspects real test exit + counts,
 # so it cannot be satisfied by narration — only by tests actually passing.
 set -euo pipefail
-out=$(go test ./... -count=1 2>&1) || true
+out=$(timeout 50 go test ./... -count=1 2>&1) || { [ $? -eq 124 ] && { echo "test run timed out" >&2; exit 1; }; true; }
 total=$(grep -cE '^(ok|FAIL|---)' <<<"$out" || true)
 fails=$(grep -cE '^(--- FAIL|FAIL)' <<<"$out" || true)
 pass=$(( total - fails ))
