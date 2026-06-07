@@ -58,21 +58,34 @@ the *targets* that define done.
 3. **For each gate, ask: is there a countable quantity of remaining work?**
    That's its **trend** — the burndown that shows convergence before the gate
    flips. (failing tests remaining; unmigrated call sites; conformance cases
-   not yet passing; bytes of legacy code left.) A gate without a trend is fine;
-   a trend without a gate usually means you haven't defined done.
+   not yet passing; bytes of legacy code left.) **Prefer trends — expect them
+   to outnumber gates.** A gate only ever says done/not-done; a trend shows
+   trajectory the whole way there, which is what monitoring is for. Every gate
+   should have at least one trend converging toward it; a trend without a gate
+   usually means you haven't defined done.
 
-4. **For each measure, ask: does existing tooling already compute this?**
+4. **For each trend, ask: how often will it visibly move during active work?**
+   A good trend ticks many times per working session. A trend that changes
+   only once an hour is secretly a **composite metric** — it is built out of
+   smaller quantities that move between its ticks, and those are the better
+   measures. Decompose until movement is frequent: "modules fully migrated"
+   (moves rarely) → "call sites migrated" (moves per edit); "test files green"
+   → "individual tests passing"; "packages warning-free" → "total warnings".
+   Keep the coarse quantity only if it earns its place as a gate; collect the
+   fine-grained one as the trend.
+
+5. **For each measure, ask: does existing tooling already compute this?**
    Test runner, linter, typechecker, build system, benchmark harness, grep.
    Most measures are thin wrappers — you are *declaring which existing signals
    constitute the goal*, not inventing new measurement.
 
-5. **Ask: can it run inside the time budget?** (next section)
+6. **Ask: can it run inside the time budget?** (next section)
    - Yes → script runs the check directly.
    - No → **artifact pattern**: the expensive thing writes a machine-readable
      result file when it actually runs; the measure script just parses it and
      reports staleness honestly.
 
-6. **Ask: is it deterministically checkable at all?**
+7. **Ask: is it deterministically checkable at all?**
    - Yes → `rung: deterministic` (strongly preferred).
    - No (requires judgment: "is the prose clear", "does the UI look right") →
      `rung: judge`, and the script's job becomes *gathering the artifact*
@@ -80,9 +93,10 @@ the *targets* that define done.
      concrete. If you reach for `judge` more than once or twice, the goal
      needs sharpening, not more judges.
 
-7. **Prune.** A handful of gates that genuinely bound "done" plus the few
-   trends that show trajectory. More is not better — every extra measure is
-   surface area for gaming and noise in the UI.
+8. **Prune.** A few gates that genuinely bound "done" plus the trends that
+   show trajectory — trends should survive pruning more often than gates.
+   More is not better — every extra measure is surface area for gaming and
+   noise in the UI.
 
 ---
 
