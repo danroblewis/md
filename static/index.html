@@ -54,7 +54,10 @@
     const CLAIM_NAME = {
       begin: /\b(claim|evident)\s+/,
       beginScope: 'keyword',
-      end: /[a-z_][A-Za-z0-9_]*/,
+      // Name may start with a capital (e.g. `claim TLTlC`); a lowercase-only
+      // first class made hljs skip the leading capitals and colour only the
+      // tail from the first lowercase letter.
+      end: /[A-Za-z_][A-Za-z0-9_]*/,
       endScope: 'title.function',
       relevance: 2,
     };
@@ -737,6 +740,10 @@ html, body { height: 100%; background: var(--bg); color: var(--fg); font-family:
    sidebar past the viewport. */
 #session-list { flex: 1; min-height: 0; overflow-y: auto; padding: 6px 0; display: none; }
 .session-group { margin-bottom: 4px; }
+/* Cap each project's session list so old, session-heavy folders don't push the
+   other folders off-screen: it shows the most recent few and scrolls for more.
+   ~170px ≈ 4 items; shorter lists just shrink to fit. */
+.session-items { max-height: 170px; overflow-y: auto; }
 .session-group-label {
   display: block;
   padding: 4px 10px;
