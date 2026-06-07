@@ -921,7 +921,8 @@ mark.search-hit-active { background: #f59e0b; box-shadow: 0 0 0 2px #f59e0b; }
 .gp-goal-title { font-size: 20px; font-weight: 700; margin: 0 0 4px; }
 .gp-goal-sub { color: var(--blockquote-fg); font-size: 13px; margin-bottom: 20px; }
 .gp-section-h { font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--blockquote-fg); margin: 22px 0 8px; }
-.gp-measure { display: grid; grid-template-columns: 1fr auto; gap: 4px 14px; align-items: center; padding: 12px 14px; border: 1px solid var(--border); border-radius: 8px; margin-bottom: 8px; background: var(--bg); }
+.gp-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 10px; }
+.gp-measure { display: grid; grid-template-columns: 1fr auto; gap: 4px 14px; align-items: center; align-content: start; padding: 12px 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); }
 .gp-measure.errored { border-color: var(--errored); }
 .gp-m-name { font-weight: 600; }
 .gp-m-name .gp-rung { font-weight: 400; font-size: 11px; color: var(--blockquote-fg); margin-left: 8px; text-transform: uppercase; letter-spacing: 0.04em; }
@@ -1733,7 +1734,7 @@ function switchMode(mode) {
   // Progress mode takes over the main panel; restore file/session view otherwise.
   const gpPanel = document.getElementById('goalpost-panel');
   const renderPanel = document.getElementById('render-panel');
-  gpPanel.style.display = mode === 'goalpost' ? 'flex' : 'none';
+  gpPanel.style.display = mode === 'goalpost' ? 'block' : 'none';
   renderPanel.style.display = mode === 'goalpost' ? 'none' : '';
 
   const input = document.getElementById('search-input');
@@ -1844,11 +1845,11 @@ function renderGoalpostPanel(goal, measures) {
 
   if (gates.length) {
     html += '<div class="gp-section-h">Gates — definition of done</div>';
-    html += gates.map(gpMeasureHTML).join('');
+    html += '<div class="gp-grid">' + gates.map(gpMeasureHTML).join('') + '</div>';
   }
   if (trends.length) {
     html += '<div class="gp-section-h">Trends — trajectory</div>';
-    html += trends.map(gpMeasureHTML).join('');
+    html += '<div class="gp-grid">' + trends.map(gpMeasureHTML).join('') + '</div>';
   }
   el.innerHTML = html;
 
