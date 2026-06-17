@@ -201,6 +201,7 @@ func main() {
 	})
 	mux.HandleFunc("/api/files", handleFiles(absDir, maxDepth))
 	mux.HandleFunc("/api/file", handleFile(absDir))
+	mux.HandleFunc("/api/raw", handleRaw(absDir))
 	mux.HandleFunc("/api/search", handleSearch(absDir))
 	mux.HandleFunc("/api/config", handleConfig(initialFile))
 	mux.HandleFunc("/events", handleSSE(broker))
@@ -413,6 +414,32 @@ func handleFile(root string) http.HandlerFunc {
 		default:
 			http.Error(w, "method not allowed", 405)
 		}
+	}
+}
+
+// handleRaw serves a file's raw bytes with a content type inferred from its
+// extension. Unlike /api/file (which forces text/plain for the viewer/editor),
+// this lets the browser display images directly — used both for image files
+// opened on their own and for <img> tags embedded in rendered markdown.
+// http.ServeFile handles content-type sniffing, Range requests, and caching.
+func handleRaw(root string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		relPath := r.URL.Query().Get("path")
+		if relPath == "" {
+			http.Error(w, "missing path", 400)
+			return
+		}
+		abs, ok := safeAbs(root, relPath)
+		if !ok {
+			http.Error(w, "forbidden", 403)
+			return
+		}
+		info, err := os.Stat(abs)
+		if err != nil || info.IsDir() {
+			http.Error(w, "not found", 404)
+			return
+		}
+		http.ServeFile(w, r, abs)
 	}
 }
 

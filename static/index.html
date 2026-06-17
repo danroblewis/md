@@ -576,6 +576,9 @@ html, body { height: 100%; background: var(--bg); color: var(--fg); font-family:
 #render-panel th { background: var(--code-bg); font-weight: 600; }
 #render-panel tr:nth-child(even) { background: var(--sidebar-bg); }
 #render-panel img { max-width: 100%; border-radius: 4px; }
+/* Standalone image file: center it and let it use the panel's full size. */
+#render-panel .doc.image-view { display: flex; justify-content: center; padding: 16px 0; }
+#render-panel .doc.image-view img { max-width: 100%; height: auto; }
 #render-panel hr { border: none; border-top: 1px solid var(--border); margin: 1.5em 0; }
 
 #render-panel pre {
@@ -1255,6 +1258,41 @@ const EXT_LANG_MAP = {
   smt: 'smt', smt2: 'smt',
 };
 
+// Image file extensions we render as <img> rather than as text/source.
+const IMAGE_EXTS = new Set([
+  'png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico', 'avif', 'apng',
+]);
+
+function isImagePath(path) {
+  return IMAGE_EXTS.has(path.toLowerCase().split('.').pop());
+}
+
+// Directory (root-relative, forward-slash) used to resolve relative image
+// sources in the markdown currently being rendered. Set by renderFile; cleared
+// for views (sessions) where no single source file applies.
+let imageBaseDir = null;
+
+// Resolve a markdown image src against the current document's directory and
+// turn it into an /api/raw URL the server can serve. Absolute URLs, data: URIs
+// and protocol-relative links are left untouched.
+function resolveImageSrc(src) {
+  if (!src) return src;
+  if (/^[a-z][a-z0-9+.-]*:/i.test(src) || src.startsWith('//')) return src;
+  // Strip a leading slash so root-relative paths resolve from the served root.
+  let rel = src.replace(/^\/+/, '');
+  if (imageBaseDir && !src.startsWith('/')) {
+    rel = imageBaseDir ? imageBaseDir + '/' + rel : rel;
+  }
+  // Normalize . and .. segments so the server sees a clean root-relative path.
+  const out = [];
+  for (const seg of rel.split('/')) {
+    if (seg === '' || seg === '.') continue;
+    if (seg === '..') out.pop();
+    else out.push(seg);
+  }
+  return '/api/raw?path=' + encodeURIComponent(out.join('/'));
+}
+
 // Extension used to pick syntax highlighting. Jinja2 templates (e.g.
 // foo.smt2.j2) are highlighted by their underlying file type.
 function highlightExt(path) {
@@ -1422,7 +1460,14 @@ async function openFile(path, fromPopstate) {
   setActiveTreeItem(path);
   closeSidebarDrawer();
   document.getElementById('current-file-name').textContent = path;
-  document.getElementById('edit-btn').style.display = '';
+  // Images are displayed, not editable as text, so hide the Edit button.
+  document.getElementById('edit-btn').style.display = isImagePath(path) ? 'none' : '';
+
+  // Image files are served raw via <img>; no text body to fetch.
+  if (isImagePath(path)) {
+    renderFile(path, null);
+    return;
+  }
 
   try {
     const res = await fetch('/api/file?path=' + encodeURIComponent(path));
@@ -1436,11 +1481,21 @@ async function openFile(path, fromPopstate) {
 
 // ── Render ───────────────────────────────────────────────
 async function renderFile(path, text) {
+  // Image files are displayed directly rather than as text/source.
+  if (isImagePath(path)) {
+    renderImageFile(path);
+    return;
+  }
+
   const ext = highlightExt(path);
   const isMd = ext === 'md' || ext === 'markdown';
   const lang = EXT_LANG_MAP[ext] || ext;
 
   const mdSource = isMd ? text : ('```' + lang + '\n' + text + '\n```');
+
+  // Resolve relative image links in this doc against its own directory.
+  const slash = path.lastIndexOf('/');
+  imageBaseDir = slash >= 0 ? path.slice(0, slash) : '';
 
   const panel = document.getElementById('render-panel');
   // Save scroll as fraction of total height
@@ -1471,6 +1526,22 @@ async function renderFile(path, text) {
   // Restore scroll after mermaid (SVG expansion may change scrollHeight)
   panel.scrollTop = scrollFraction * panel.scrollHeight;
 
+  renderPageTicks();
+}
+
+// Render a standalone image file centered in the panel.
+function renderImageFile(path) {
+  const panel = document.getElementById('render-panel');
+  panel.classList.add('full-width');
+  panel.innerHTML = '';
+  const doc = document.createElement('div');
+  doc.className = 'doc image-view';
+  const img = document.createElement('img');
+  img.src = '/api/raw?path=' + encodeURIComponent(path);
+  img.alt = path;
+  doc.appendChild(img);
+  panel.appendChild(doc);
+  panel.scrollTop = 0;
   renderPageTicks();
 }
 
@@ -2165,6 +2236,9 @@ const WINDOW_PAGES = 3;   // pages kept mounted at once (prev / current / next)
 const PREFETCH_VH = window.matchMedia('(pointer: coarse)').matches ? 3 : 2;
 
 function renderSession(data, restore) {
+  // No single source file backs a transcript; don't resolve relative image
+  // links against whatever file was viewed before.
+  imageBaseDir = null;
   const panel = document.getElementById('render-panel');
 
   // Tear down any previous window (scroll/key listeners).
@@ -2727,6 +2801,22 @@ marked.use({
     html(token) {
       const text = typeof token === 'object' ? token.text : token;
       return escHtml(text);
+    },
+    // Rewrite relative image sources to /api/raw so they resolve against the
+    // served root rather than the page origin. marked v12 passes either a token
+    // object or positional (href, title, text) depending on call site.
+    image(href, title, text) {
+      let src, alt, ttl;
+      if (typeof href === 'object' && href !== null) {
+        src = href.href; alt = href.text; ttl = href.title;
+      } else {
+        src = href; ttl = title; alt = text;
+      }
+      const out = ['<img src="', escHtml(resolveImageSrc(src)), '"'];
+      if (alt) out.push(' alt="', escHtml(alt), '"');
+      if (ttl) out.push(' title="', escHtml(ttl), '"');
+      out.push('>');
+      return out.join('');
     },
     code(code, lang) {
       if (lang === 'mermaid') {
