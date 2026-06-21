@@ -323,6 +323,10 @@
 </script>
 <script src="https://cdn.jsdelivr.net/npm/marked@12.0.0/marked.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/mermaid@11.4.0/dist/mermaid.min.js"></script>
+<!-- diff2html for the Diff tab. The "slim" UI bundle reuses the global
+     highlight.js already loaded above instead of shipping its own copy. -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/diff2html@3.4.51/bundles/css/diff2html.min.css">
+<script src="https://cdn.jsdelivr.net/npm/diff2html@3.4.51/bundles/js/diff2html-ui-slim.min.js"></script>
 
 
 <style>
@@ -941,6 +945,57 @@ mark.search-hit-active { background: #f59e0b; box-shadow: 0 0 0 2px #f59e0b; }
 .gp-err-msg { grid-column: 1 / -1; color: var(--errored); font-size: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; margin-top: 4px; white-space: pre-wrap; word-break: break-word; }
 .gp-stale { font-size: 11px; color: var(--blockquote-fg); }
 
+/* ── Diff view ─────────────────────────────────────────────
+   The panel hosts diff2html's generated markup; #diff-list is a sidebar
+   summary of the changed files (click to scroll to that file's diff). */
+#diff-list { display: none; padding: 6px; overflow-y: auto; }
+.diff-file-item { padding: 6px 10px; border-radius: 6px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 13px; }
+.diff-file-item:hover { background: var(--hover-bg); }
+.diff-file-item .diff-file-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }
+.diff-file-item .diff-file-stat { font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.diff-file-stat .add { color: var(--pass); }
+.diff-file-stat .del { color: var(--fail); }
+
+#diff-panel { flex: 1; overflow: auto; padding: 16px; }
+#diff-panel .diff-empty { color: var(--blockquote-fg); padding: 40px 0; text-align: center; }
+/* diff2html sticks the file header; that lets diff lines show above it while
+   scrolling, so pin it back to normal flow. */
+#diff-panel .d2h-file-header { position: static; }
+/* diff2html positions line numbers absolutely, assuming the whole page
+   scrolls. Inside our overflow panel they'd otherwise anchor to the viewport
+   and stay pinned while the code scrolls past. Making each diff body a
+   positioned containing block re-anchors them so they scroll with the code
+   (and still stay put during horizontal code scroll). */
+#diff-panel .d2h-file-side-diff,
+#diff-panel .d2h-file-diff { position: relative; }
+.diff-select { background: var(--bg); color: var(--fg); border: 1px solid var(--border); border-radius: 6px; padding: 4px 6px; font-size: 13px; }
+/* Let diff2html follow the page theme rather than its baked-in light palette. */
+[data-theme="dark"] #diff-panel .d2h-wrapper,
+[data-theme="dark"] #diff-panel .d2h-file-wrapper,
+[data-theme="dark"] #diff-panel .d2h-file-header,
+[data-theme="dark"] #diff-panel .d2h-code-line,
+[data-theme="dark"] #diff-panel .d2h-diff-table { background: var(--bg); color: var(--fg); border-color: var(--border); }
+[data-theme="dark"] #diff-panel .d2h-file-list-wrapper,
+[data-theme="dark"] #diff-panel .d2h-file-list-header,
+[data-theme="dark"] #diff-panel .d2h-file-list-title { background: var(--bg); color: var(--fg); }
+[data-theme="dark"] #diff-panel .d2h-code-linenumber,
+[data-theme="dark"] #diff-panel .d2h-code-side-linenumber { background: var(--bg); color: var(--blockquote-fg); border-color: var(--border); }
+[data-theme="dark"] #diff-panel .d2h-ins { background: #14331f; }
+[data-theme="dark"] #diff-panel .d2h-ins .d2h-code-line-ctn { background: #14331f; }
+[data-theme="dark"] #diff-panel .d2h-del { background: #3a1717; }
+[data-theme="dark"] #diff-panel .d2h-del .d2h-code-line-ctn { background: #3a1717; }
+[data-theme="dark"] #diff-panel .d2h-cntx { background: var(--bg); }
+/* Side-by-side rows with no counterpart on one side default to a light fill. */
+[data-theme="dark"] #diff-panel .d2h-emptyplaceholder,
+[data-theme="dark"] #diff-panel .d2h-code-side-emptyplaceholder,
+[data-theme="dark"] #diff-panel .d2h-code-side-linenumber.d2h-emptyplaceholder { background: var(--hover-bg); border-color: var(--border); }
+[data-theme="dark"] #diff-panel .d2h-info { background: var(--hover-bg); color: var(--blockquote-fg); }
+[data-theme="dark"] #diff-panel ins { background: #1d5631; text-decoration: none; }
+[data-theme="dark"] #diff-panel del { background: #5e1f1f; text-decoration: none; }
+[data-theme="dark"] #diff-panel .d2h-file-name { color: var(--fg); }
+[data-theme="dark"] #diff-panel .d2h-file-header { background: var(--hover-bg); }
+[data-theme="dark"] #diff-panel .d2h-tag { background: var(--bg); }
+
 /* ── Phone layout ─────────────────────────────────────────
    Below the breakpoint the sidebar becomes a slide-over drawer toggled by the
    ☰ toolbar button (hidden on desktop), with a scrim to dismiss. Everything
@@ -1018,6 +1073,7 @@ mark.search-hit-active { background: #f59e0b; box-shadow: 0 0 0 2px #f59e0b; }
       <button class="mode-tab active" id="tab-files" data-mode="files">Files</button>
       <button class="mode-tab" id="tab-sessions" data-mode="sessions">Sessions</button>
       <button class="mode-tab" id="tab-goalpost" data-mode="goalpost">Progress</button>
+      <button class="mode-tab" id="tab-diff" data-mode="diff">Diff</button>
     </div>
     <div id="search-box">
       <input id="search-input" type="text" placeholder="Search files..." autocomplete="off" spellcheck="false">
@@ -1026,6 +1082,7 @@ mark.search-hit-active { background: #f59e0b; box-shadow: 0 0 0 2px #f59e0b; }
     <div id="file-tree"></div>
     <div id="session-list"></div>
     <div id="goalpost-list"></div>
+    <div id="diff-list"></div>
   </aside>
 
   <div id="sidebar-resizer" title="Drag to resize sidebar"></div>
@@ -1046,6 +1103,15 @@ mark.search-hit-active { background: #f59e0b; box-shadow: 0 0 0 2px #f59e0b; }
         <button class="toolbar-btn" id="sess-top" title="Jump to start (Home)">⏫ Start</button>
         <button class="toolbar-btn" id="sess-end" title="Jump to end (End)">End ⏬</button>
       </span>
+      <span id="diff-controls" style="display:none">
+        <select id="diff-against" class="diff-select" title="What to compare">
+          <option value="worktree">Working tree</option>
+          <option value="unstaged">Unstaged</option>
+          <option value="staged">Staged</option>
+        </select>
+        <button class="toolbar-btn" id="diff-format-toggle" title="Toggle inline / side-by-side">Side-by-side</button>
+        <button class="toolbar-btn" id="diff-refresh" title="Refresh diff">⟳</button>
+      </span>
       <button class="toolbar-btn" id="width-toggle" title="Toggle full width"
         onclick="(function(p){p.classList.toggle('full-width');localStorage.setItem('fullWidth',p.classList.contains('full-width')?'1':'0');})(document.getElementById('render-panel'))">↔</button>
       <button class="toolbar-btn" id="theme-toggle">Dark</button>
@@ -1059,6 +1125,7 @@ mark.search-hit-active { background: #f59e0b; box-shadow: 0 0 0 2px #f59e0b; }
     </div>
     <div id="editor-panel" tabindex="-1"></div>
     <div id="goalpost-panel" style="display:none"></div>
+    <div id="diff-panel" style="display:none"></div>
   </main>
 </div>
 
@@ -1234,12 +1301,14 @@ const state = {
   currentPath: null,
   editorInstance: null,
   isEditing: false,
-  mode: 'files',          // 'files' | 'sessions' | 'goalpost'
+  mode: 'files',          // 'files' | 'sessions' | 'goalpost' | 'diff'
   sessionGroups: null,    // cached /api/sessions response
   currentSessionId: null,
   sessionRender: null,    // { turns, index, observer } for incremental rendering
   goalpostGoal: null,     // selected goal id in Progress view
   goalpostTimer: null,    // poll interval handle (active only in Progress mode)
+  diffAgainst: 'worktree',// what the Diff view compares (worktree|unstaged|staged)
+  diffFormat: localStorage.getItem('diffFormat') === 'line-by-line' ? 'line-by-line' : 'side-by-side',
 };
 
 // ── Extension → language map ────────────────────────────
@@ -1646,6 +1715,8 @@ function connectSSE() {
     if (msg.type === 'reload') {
       // Always refresh file tree
       loadFileTree();
+      // Keep the Diff view in sync when files change underneath it.
+      if (state.mode === 'diff') scheduleDiffReload();
       // If changed file is currently open and we're not editing, re-render
       if (msg.path === state.currentPath && !state.isEditing) {
         try {
@@ -1800,13 +1871,17 @@ function switchMode(mode) {
   document.getElementById('file-tree').style.display = mode === 'files' ? '' : 'none';
   document.getElementById('session-list').style.display = mode === 'sessions' ? 'block' : 'none';
   document.getElementById('goalpost-list').style.display = mode === 'goalpost' ? 'block' : 'none';
-  document.getElementById('search-box').style.display = mode === 'goalpost' ? 'none' : '';
+  document.getElementById('diff-list').style.display = mode === 'diff' ? 'block' : 'none';
+  document.getElementById('search-box').style.display = (mode === 'goalpost' || mode === 'diff') ? 'none' : '';
 
-  // Progress mode takes over the main panel; restore file/session view otherwise.
+  // Progress and Diff modes take over the main panel; restore file/session view otherwise.
   const gpPanel = document.getElementById('goalpost-panel');
+  const diffPanel = document.getElementById('diff-panel');
   const renderPanel = document.getElementById('render-panel');
   gpPanel.style.display = mode === 'goalpost' ? 'block' : 'none';
-  renderPanel.style.display = mode === 'goalpost' ? 'none' : '';
+  diffPanel.style.display = mode === 'diff' ? 'block' : 'none';
+  renderPanel.style.display = (mode === 'goalpost' || mode === 'diff') ? 'none' : '';
+  document.getElementById('diff-controls').style.display = mode === 'diff' ? '' : 'none';
 
   const input = document.getElementById('search-input');
   input.value = '';
@@ -1820,8 +1895,107 @@ function switchMode(mode) {
     state.goalpostTimer = setInterval(loadGoalpost, 5000);
   } else if (mode === 'sessions') {
     loadSessions();
+  } else if (mode === 'diff') {
+    loadDiff();
   }
 }
+
+// ── Diff view ───────────────────────────────────────────
+// Renders `git diff` (via /api/diff) with diff2html. The "against" selector
+// and the inline/side-by-side toggle live in the toolbar; the changed-file
+// list goes in the sidebar. A live file change reruns loadDiff (debounced).
+let diffReloadTimer = null;
+function scheduleDiffReload() {
+  clearTimeout(diffReloadTimer);
+  diffReloadTimer = setTimeout(() => { if (state.mode === 'diff') loadDiff(); }, 400);
+}
+
+async function loadDiff() {
+  const panel = document.getElementById('diff-panel');
+  const list = document.getElementById('diff-list');
+  let res;
+  try {
+    res = await fetch('/api/diff?against=' + encodeURIComponent(state.diffAgainst)).then(r => r.json());
+  } catch (e) {
+    panel.innerHTML = '<div class="diff-empty">Could not load diff.</div>';
+    list.innerHTML = '';
+    return;
+  }
+
+  if (!res.repo) {
+    panel.innerHTML = '<div class="diff-empty">Not a git repository.</div>';
+    list.innerHTML = '';
+    return;
+  }
+  if (res.error) {
+    panel.innerHTML = '<div class="diff-empty">git error:<br><code>' + gpEsc(res.error) + '</code></div>';
+    list.innerHTML = '';
+    return;
+  }
+  const diff = res.diff || '';
+  if (!diff.trim()) {
+    panel.innerHTML = '<div class="diff-empty">No changes.</div>';
+    list.innerHTML = '';
+    return;
+  }
+
+  // diff2html's slim UI reuses the global highlight.js. drawFileList is off
+  // here — we render our own clickable list in the sidebar instead.
+  const ui = new Diff2HtmlUI(panel, diff, {
+    outputFormat: state.diffFormat,
+    drawFileList: false,
+    matching: 'lines',
+    highlight: true,
+    fileContentToggle: false,
+  });
+  ui.draw();
+  ui.highlightCode();
+  renderDiffSidebar(panel, list);
+}
+
+// Build the sidebar file list from the file wrappers diff2html emitted, so the
+// names/stats always match what's rendered. Clicking scrolls to that file.
+function renderDiffSidebar(panel, list) {
+  const wrappers = panel.querySelectorAll('.d2h-file-wrapper');
+  if (!wrappers.length) { list.innerHTML = ''; return; }
+  let html = '';
+  wrappers.forEach((w, i) => {
+    w.id = w.id || 'd2h-file-' + i;
+    const name = (w.querySelector('.d2h-file-name')?.textContent || 'file').trim();
+    const adds = w.querySelectorAll('.d2h-ins').length;
+    const dels = w.querySelectorAll('.d2h-del').length;
+    html += '<div class="diff-file-item" data-target="' + w.id + '">'
+      + '<span class="diff-file-name">' + gpEsc(name) + '</span>'
+      + '<span class="diff-file-stat"><span class="add">+' + adds + '</span> <span class="del">−' + dels + '</span></span>'
+      + '</div>';
+  });
+  list.innerHTML = html;
+  list.querySelectorAll('.diff-file-item').forEach(item => {
+    item.addEventListener('click', () => {
+      document.getElementById(item.dataset.target)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      closeSidebarDrawer();
+    });
+  });
+}
+
+document.getElementById('diff-against').addEventListener('change', e => {
+  state.diffAgainst = e.target.value;
+  loadDiff();
+});
+document.getElementById('diff-refresh').addEventListener('click', loadDiff);
+document.getElementById('diff-format-toggle').addEventListener('click', () => {
+  state.diffFormat = state.diffFormat === 'side-by-side' ? 'line-by-line' : 'side-by-side';
+  localStorage.setItem('diffFormat', state.diffFormat);
+  updateDiffFormatBtn();
+  loadDiff();
+});
+function updateDiffFormatBtn() {
+  // Label shows the mode you'll switch TO, matching the other toolbar toggles.
+  document.getElementById('diff-format-toggle').textContent =
+    state.diffFormat === 'side-by-side' ? 'Inline' : 'Side-by-side';
+}
+updateDiffFormatBtn();
+document.getElementById('diff-against').value = state.diffAgainst;
 
 // ── Goalpost / Progress view ────────────────────────────
 function gpEsc(s) {

@@ -204,6 +204,7 @@ func main() {
 	mux.HandleFunc("/api/raw", handleRaw(absDir))
 	mux.HandleFunc("/api/search", handleSearch(absDir))
 	mux.HandleFunc("/api/config", handleConfig(initialFile))
+	mux.HandleFunc("/api/diff", handleDiff(absDir))
 	mux.HandleFunc("/events", handleSSE(broker))
 
 	// Goalpost progress collection for the launched project (in-process).
@@ -440,6 +441,48 @@ func handleRaw(root string) http.HandlerFunc {
 			return
 		}
 		http.ServeFile(w, r, abs)
+	}
+}
+
+// handleDiff runs `git diff` in the served root and returns the raw unified
+// diff for the frontend (diff2html) to render. The `against` query param picks
+// what to compare, mapped through a fixed allow-list so no user input ever
+// reaches the git argv. Untracked files are not included (git diff omits them).
+func handleDiff(root string) http.HandlerFunc {
+	modes := map[string][]string{
+		"worktree": {"diff", "HEAD"},     // all uncommitted changes vs last commit
+		"unstaged": {"diff"},             // working tree vs index
+		"staged":   {"diff", "--cached"}, // index vs last commit
+	}
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		against := r.URL.Query().Get("against")
+		args, ok := modes[against]
+		if !ok {
+			against, args = "worktree", modes["worktree"]
+		}
+
+		// Bail cleanly if the root isn't a git work tree.
+		check := exec.Command("git", "rev-parse", "--is-inside-work-tree")
+		check.Dir = root
+		if out, err := check.Output(); err != nil || strings.TrimSpace(string(out)) != "true" {
+			json.NewEncoder(w).Encode(map[string]any{"repo": false})
+			return
+		}
+
+		cmd := exec.Command("git", args...)
+		cmd.Dir = root
+		out, err := cmd.Output()
+		if err != nil {
+			msg := err.Error()
+			if ee, ok := err.(*exec.ExitError); ok && len(ee.Stderr) > 0 {
+				msg = strings.TrimSpace(string(ee.Stderr))
+			}
+			json.NewEncoder(w).Encode(map[string]any{"repo": true, "against": against, "error": msg})
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]any{"repo": true, "against": against, "diff": string(out)})
 	}
 }
 
