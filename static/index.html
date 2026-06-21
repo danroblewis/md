@@ -579,11 +579,31 @@ html, body { height: 100%; background: var(--bg); color: var(--fg); font-family:
 #render-panel th, #render-panel td { border: 1px solid var(--border); padding: 6px 12px; text-align: left; }
 #render-panel th { background: var(--code-bg); font-weight: 600; }
 #render-panel tr:nth-child(even) { background: var(--sidebar-bg); }
-#render-panel img { max-width: 100%; border-radius: 4px; }
+#render-panel img { max-width: 100%; border-radius: 4px; cursor: zoom-in; }
 /* Standalone image file: center it and let it use the panel's full size. */
 #render-panel .doc.image-view { display: flex; justify-content: center; padding: 16px 0; }
 #render-panel .doc.image-view img { max-width: 100%; height: auto; }
 #render-panel hr { border: none; border-top: 1px solid var(--border); margin: 1.5em 0; }
+
+/* ── Image lightbox ───────────────────────────────────────── */
+#img-modal {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: rgba(0, 0, 0, 0.85);
+  cursor: zoom-out;
+  padding: 24px;
+  box-sizing: border-box;
+}
+#img-modal.open { display: flex; align-items: center; justify-content: center; }
+#img-modal img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  border-radius: 4px;
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.5);
+}
 
 #render-panel pre {
   background: var(--code-bg);
@@ -1128,6 +1148,10 @@ mark.search-hit-active { background: #f59e0b; box-shadow: 0 0 0 2px #f59e0b; }
     <div id="diff-panel" style="display:none"></div>
   </main>
 </div>
+
+<!-- Image lightbox: click any rendered image to enlarge; click anywhere
+     (or press Esc) to close. -->
+<div id="img-modal" aria-hidden="true"><img alt=""></div>
 
 <script>
 // ── CodeMirror — loaded on demand via dynamic import ─────
@@ -3002,6 +3026,38 @@ marked.use({
     }
   }
 });
+
+// ── Image lightbox ──────────────────────────────────────
+// Click any image in rendered content to open it large; click the overlay
+// (or press Esc) to close. Delegated so it covers re-rendered/streamed content.
+(function () {
+  const modal = document.getElementById('img-modal');
+  const modalImg = modal.querySelector('img');
+
+  function open(src, alt) {
+    modalImg.src = src;
+    modalImg.alt = alt || '';
+    modal.classList.add('open');
+    modal.setAttribute('aria-hidden', 'false');
+  }
+  function close() {
+    modal.classList.remove('open');
+    modal.setAttribute('aria-hidden', 'true');
+    modalImg.removeAttribute('src');
+  }
+
+  document.getElementById('render-panel').addEventListener('click', (e) => {
+    const img = e.target.closest('img');
+    if (!img) return;
+    e.preventDefault(); // an image wrapped in a link opens the lightbox, not the link
+    open(img.currentSrc || img.src, img.alt);
+  });
+
+  modal.addEventListener('click', close);
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && modal.classList.contains('open')) close();
+  });
+})();
 </script>
 </body>
 </html>
